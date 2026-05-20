@@ -50,6 +50,22 @@ def build_anketa_keyboard() -> InlineKeyboardBuilder:
     return b
 
 
+def build_training_hub_keyboard() -> InlineKeyboardBuilder:
+    """Меню раздела «Тренировки» перед рабочим меню сессии."""
+    b = InlineKeyboardBuilder()
+    b.row(CallbackButton(text="📖 Правила тренировки", payload="nav:training_rules"))
+    b.row(CallbackButton(text="🚀 Начать тренировку", payload="nav:training_begin"))
+    b.row(CallbackButton(text="↩️ Основное меню", payload="nav:main"))
+    return b
+
+
+def build_training_rules_keyboard() -> InlineKeyboardBuilder:
+    """Клавиатура после показа правил — возврат в раздел тренировок."""
+    b = InlineKeyboardBuilder()
+    b.row(CallbackButton(text="↩️ Назад", payload="nav:training"))
+    return b
+
+
 def build_training_keyboard() -> InlineKeyboardBuilder:
     b = InlineKeyboardBuilder()
     b.row(

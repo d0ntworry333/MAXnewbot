@@ -21,12 +21,20 @@ from handlers.show import handle_show_callback
 
 from services import user_service, training_service
 from content.texts import (
-    TEXT_RECOVERY, TEXT_ACHIEVEMENTS_STUB, TEXT_NO_ACTIVE_SESSION,
+    TEXT_RECOVERY,
+    TEXT_ACHIEVEMENTS_STUB,
+    TEXT_NO_ACTIVE_SESSION,
+    TEXT_TRAINING_PROGRAM,
     get_diet_text,
 )
 from transport.max.keyboards import (
-    build_menu_keyboard, build_main_keyboard, build_anketa_keyboard,
-    build_training_keyboard, build_training_days_keyboard,
+    build_menu_keyboard,
+    build_main_keyboard,
+    build_anketa_keyboard,
+    build_training_hub_keyboard,
+    build_training_rules_keyboard,
+    build_training_keyboard,
+    build_training_days_keyboard,
 )
 from transport.max.helpers import send_with_keyboard, send_long_message
 
@@ -101,19 +109,41 @@ async def _handle_nav(event, payload: str, user_id: int, bot, context: MemoryCon
         await send_with_keyboard(bot, user_id, TEXT_RECOVERY, kb)
 
     elif dest == "training":
-        session = training_service.get_active_session(user_id)
-        if session:
-            text = training_service.get_training_status(session)
-            kb = build_training_keyboard()
-            await send_with_keyboard(bot, user_id, text, kb)
-        else:
-            text = "🏋️ Выберите дни тренировок:"
-            kb = build_training_days_keyboard()
-            await send_with_keyboard(bot, user_id, text, kb)
+        kb = build_training_hub_keyboard()
+        await send_with_keyboard(
+            bot,
+            user_id,
+            "🏋️ Раздел тренировок\n\nВыберите действие:",
+            kb,
+        )
+
+    elif dest == "training_rules":
+        kb = build_training_rules_keyboard()
+        await send_long_message(
+            bot,
+            user_id,
+            TEXT_TRAINING_PROGRAM,
+            attachments=[kb.as_markup()],
+        )
+
+    elif dest == "training_begin":
+        await _show_training_workspace(user_id, bot)
 
     elif dest == "achievements":
         kb = build_menu_keyboard()
         await send_with_keyboard(bot, user_id, TEXT_ACHIEVEMENTS_STUB, kb)
+
+
+async def _show_training_workspace(user_id: int, bot) -> None:
+    """Меню активной сессии или выбор дней, если сессии ещё нет."""
+    session = training_service.get_active_session(user_id)
+    if session:
+        text = training_service.get_training_status(session)
+        kb = build_training_keyboard()
+        await send_with_keyboard(bot, user_id, text, kb)
+    else:
+        kb = build_training_days_keyboard()
+        await send_with_keyboard(bot, user_id, "🏋️ Выберите дни тренировок:", kb)
 
 
 async def _handle_action(event, payload: str, user_id: int, bot, context: MemoryContext):

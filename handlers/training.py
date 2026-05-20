@@ -17,9 +17,13 @@ from core.validators import parse_exercise_weight, parse_body_weight
 from content.texts import TEXT_NO_ACTIVE_SESSION, TEXT_TRAINING_COMPLETE, TEXT_ALL_WEIGHTS_RECORDED, TEXT_ALREADY_WEEK_1
 from content.exercises import TRAINING_TYPES, get_exercises_for_day, format_exercise_list
 from transport.max.keyboards import (
-    build_training_keyboard, build_start_training_keyboard, build_health_keyboard,
-    build_technique_keyboard, build_training_days_keyboard, build_next_week_keyboard,
-    build_weighin_skip_keyboard, build_main_keyboard,
+    build_training_keyboard,
+    build_health_keyboard,
+    build_technique_keyboard,
+    build_training_days_keyboard,
+    build_next_week_keyboard,
+    build_weighin_skip_keyboard,
+    build_main_keyboard,
 )
 from transport.max.helpers import send_with_keyboard, send_long_message
 
@@ -39,11 +43,14 @@ async def handle_days_selection(event, payload: str, user_id: int, bot) -> None:
     if not training_days:
         return
 
-    from content.texts import TEXT_TRAINING_PROGRAM
-
     training_service.create_session(user_id, training_days)
-    kb = build_start_training_keyboard()
-    await send_with_keyboard(bot, user_id, TEXT_TRAINING_PROGRAM, kb)
+    session = training_service.get_active_session(user_id)
+    if not session:
+        await bot.send_message(user_id=user_id, text=TEXT_NO_ACTIVE_SESSION)
+        return
+    text = training_service.get_training_status(session)
+    kb = build_training_keyboard()
+    await send_with_keyboard(bot, user_id, text, kb)
 
 
 async def handle_training_nav(event, payload: str, user_id: int, bot, context: MemoryContext) -> None:
