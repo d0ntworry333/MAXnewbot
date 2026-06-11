@@ -136,32 +136,19 @@ def complete_training(
     }
 
 
-def advance_to_next_week(session_id: int) -> None:
+def advance_to_next_week(session_id: int) -> bool:
+    """Перейти на следующую неделю. False, если неделя 8 или чек не пройден."""
+    from services.check_service import can_advance_week
+
+    session = session_repo.get_active_session_by_id(session_id)
+    if not session or not can_advance_week(session):
+        return False
     session_repo.advance_week(session_id)
+    return True
 
 
 def go_to_previous_week(session: TrainingSession) -> bool:
     return session_repo.go_previous_week(session.id, session.week_number)
-
-
-def handle_check01_yes(session_id: int) -> None:
-    session_repo.update_session(session_id, check01_passed=True)
-
-
-def handle_check01_no(session_id: int) -> None:
-    session_repo.update_session(session_id, completed_days=0, current_day=0)
-
-
-def handle_check02_pass(session_id: int) -> None:
-    session_repo.update_session(session_id, check02_passed=True)
-
-
-def needs_check01(session: TrainingSession) -> bool:
-    return session.week_number == 2 and not session.check01_passed
-
-
-def needs_check02(session: TrainingSession) -> bool:
-    return session.week_number >= 2 and not session.check02_passed
 
 
 def save_body_weight(user_id: int, weight: float) -> None:

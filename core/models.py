@@ -31,6 +31,9 @@ class TrainingSession:
     session_active: bool
     check01_passed: bool
     check02_passed: bool
+    check03_passed: bool
+    check04_passed: bool
+    check05_passed: bool
     created_at: str
     updated_at: str
 

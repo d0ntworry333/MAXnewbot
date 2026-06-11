@@ -19,7 +19,6 @@ from content.texts import (
     TEXT_TRAINING_COMPLETE,
     TEXT_ALL_WEIGHTS_RECORDED,
     TEXT_ALREADY_WEEK_1,
-    get_week_transition_text,
 )
 from content.exercises import EXERCISE_BY_ID, get_training_day_label
 from transport.max.keyboards import (
@@ -143,22 +142,8 @@ async def handle_training_nav(event, payload: str, user_id: int, bot, context: M
         await send_with_keyboard(bot, user_id, "🏋️ Тренировочное меню", kb)
 
     elif action == "next_week":
-        session = training_service.get_active_session(user_id)
-        if not session:
-            await bot.send_message(user_id=user_id, text=TEXT_NO_ACTIVE_SESSION)
-            return
-        training_service.advance_to_next_week(session.id)
-        session = training_service.get_active_session(user_id)
-        gender = _user_gender(user_id)
-        goal = _user_goal(user_id)
-        parts = [f"➡️ Переход на неделю {session.week_number}"]
-        transition = get_week_transition_text(goal, session.week_number, gender)
-        if transition:
-            parts.append(transition)
-        parts.append(training_service.get_training_status(session, gender))
-        text = "\n\n".join(parts)
-        kb = build_training_keyboard()
-        await send_long_message(bot, user_id, text, attachments=[kb.as_markup()])
+        from handlers.training_check import try_advance_week_or_check
+        await try_advance_week_or_check(user_id, bot, context)
 
     elif action == "prev_week":
         session = training_service.get_active_session(user_id)

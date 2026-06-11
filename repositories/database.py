@@ -50,6 +50,9 @@ def init_db() -> None:
                 session_active BOOLEAN DEFAULT 1,
                 check01_passed BOOLEAN DEFAULT 0,
                 check02_passed BOOLEAN DEFAULT 0,
+                check03_passed BOOLEAN DEFAULT 0,
+                check04_passed BOOLEAN DEFAULT 0,
+                check05_passed BOOLEAN DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -90,7 +93,18 @@ def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_weight_progress_user ON weight_progress(user_id);
         """)
+        _migrate_training_sessions(conn)
         conn.commit()
         logger.info("Database initialized at %s", _db_path)
     finally:
         conn.close()
+
+
+def _migrate_training_sessions(conn: sqlite3.Connection) -> None:
+    """Добавить колонки чеков 3–5 в существующие БД."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(training_sessions)")}
+    for col in ("check03_passed", "check04_passed", "check05_passed"):
+        if col not in cols:
+            conn.execute(
+                f"ALTER TABLE training_sessions ADD COLUMN {col} BOOLEAN DEFAULT 0"
+            )

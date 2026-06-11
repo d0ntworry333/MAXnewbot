@@ -1,5 +1,5 @@
 """
-Inline keyboard builders for the MAX fitness bot.
+Inline keyboard builders for the MAX bot «Твой тренер».
 
 MAX does not have persistent reply keyboards like Telegram.
 All menus use inline keyboards attached to messages.
@@ -152,19 +152,16 @@ def build_cancel_keyboard() -> InlineKeyboardBuilder:
     return b
 
 
-def build_check01_keyboard() -> InlineKeyboardBuilder:
+def build_check_keyboard(check_id: int, final: bool = False) -> InlineKeyboardBuilder:
+    """Да/Нет для чеков 1–4; финальный чек 5 — только подтверждение."""
     b = InlineKeyboardBuilder()
-    b.row(
-        CallbackButton(text="✅ Да", payload="check:check01_yes"),
-        CallbackButton(text="❌ Нет", payload="check:check01_no"),
-    )
-    return b
-
-
-def build_check02_prompt_keyboard() -> InlineKeyboardBuilder:
-    """Shown before check02 text input to provide context."""
-    b = InlineKeyboardBuilder()
-    b.row(CallbackButton(text="❌ Пропустить", payload="check:check02_skip"))
+    if final:
+        b.row(CallbackButton(text="✅ Да, подвести итоги", payload=f"check:{check_id}:yes"))
+    else:
+        b.row(
+            CallbackButton(text="✅ Да", payload=f"check:{check_id}:yes"),
+            CallbackButton(text="❌ Нет", payload=f"check:{check_id}:no"),
+        )
     return b
 
 
