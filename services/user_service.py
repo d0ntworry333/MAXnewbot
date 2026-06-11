@@ -28,6 +28,19 @@ def create_short_profile(user_id: int, username: str, weight: float, activity_le
     return bmr
 
 
+def get_target_calories(profile: UserProfile, week: int = 1) -> float:
+    """Суточная норма калорий с учётом цели, активности и номера недели цикла."""
+    return calculate_bmr(
+        profile.weight,
+        profile.height,
+        profile.age,
+        profile.gender,
+        profile.activity_level,
+        profile.goal,
+        week=week,
+    )
+
+
 def get_latest_profile(user_id: int) -> Optional[UserProfile]:
     return user_repo.get_latest_profile(user_id)
 

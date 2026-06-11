@@ -14,8 +14,14 @@ from handlers.states import TrainingStates
 from handlers import session_store
 from services import training_service, exercise_service, user_service
 from core.validators import parse_exercise_weight, parse_body_weight
-from content.texts import TEXT_NO_ACTIVE_SESSION, TEXT_TRAINING_COMPLETE, TEXT_ALL_WEIGHTS_RECORDED, TEXT_ALREADY_WEEK_1
-from content.exercises import TRAINING_TYPES, EXERCISE_BY_ID
+from content.texts import (
+    TEXT_NO_ACTIVE_SESSION,
+    TEXT_TRAINING_COMPLETE,
+    TEXT_ALL_WEIGHTS_RECORDED,
+    TEXT_ALREADY_WEEK_1,
+    get_week_transition_text,
+)
+from content.exercises import EXERCISE_BY_ID, get_training_day_label
 from transport.max.keyboards import (
     build_training_keyboard,
     build_health_keyboard,
@@ -36,9 +42,18 @@ DAYS_MAP = {
 }
 
 
+def _user_profile(user_id: int):
+    return user_service.get_latest_profile(user_id)
+
+
 def _user_goal(user_id: int) -> str:
-    profile = user_service.get_latest_profile(user_id)
+    profile = _user_profile(user_id)
     return profile.goal if profile else "дефицит"
+
+
+def _user_gender(user_id: int) -> str:
+    profile = _user_profile(user_id)
+    return profile.gender if profile else "Мужской"
 
 
 async def handle_days_selection(event, payload: str, user_id: int, bot) -> None:
@@ -53,7 +68,7 @@ async def handle_days_selection(event, payload: str, user_id: int, bot) -> None:
     if not session:
         await bot.send_message(user_id=user_id, text=TEXT_NO_ACTIVE_SESSION)
         return
-    text = training_service.get_training_status(session)
+    text = training_service.get_training_status(session, _user_gender(user_id))
     kb = build_training_keyboard()
     await send_with_keyboard(bot, user_id, text, kb)
 
@@ -67,7 +82,7 @@ async def handle_training_nav(event, payload: str, user_id: int, bot, context: M
         if not session:
             await bot.send_message(user_id=user_id, text=TEXT_NO_ACTIVE_SESSION)
             return
-        text = training_service.get_training_status(session)
+        text = training_service.get_training_status(session, _user_gender(user_id))
         kb = build_training_keyboard()
         await send_with_keyboard(bot, user_id, text, kb)
 
@@ -76,7 +91,7 @@ async def handle_training_nav(event, payload: str, user_id: int, bot, context: M
         if not session:
             await bot.send_message(user_id=user_id, text=TEXT_NO_ACTIVE_SESSION)
             return
-        text = training_service.get_training_status(session)
+        text = training_service.get_training_status(session, _user_gender(user_id))
         kb = build_training_keyboard()
         await send_with_keyboard(bot, user_id, text, kb)
 
@@ -85,7 +100,7 @@ async def handle_training_nav(event, payload: str, user_id: int, bot, context: M
         if not session:
             await bot.send_message(user_id=user_id, text=TEXT_NO_ACTIVE_SESSION)
             return
-        text = training_service.get_schedule_text(session)
+        text = training_service.get_schedule_text(session, _user_gender(user_id))
         kb = build_training_keyboard()
         await send_with_keyboard(bot, user_id, text, kb)
 
@@ -111,7 +126,9 @@ async def handle_training_nav(event, payload: str, user_id: int, bot, context: M
             await bot.send_message(user_id=user_id, text=TEXT_NO_ACTIVE_SESSION)
             return
         pain = session_store.get(user_id, "pain_type", "healthy")
-        exercises, text = training_service.get_day_exercises(session, pain, _user_goal(user_id))
+        exercises, text = training_service.get_day_exercises(
+            session, pain, _user_goal(user_id), _user_gender(user_id),
+        )
         if exercises:
             defs = [e.exercise for e in exercises]
             session_store.put(user_id, "technique_exercises", [e.id for e in defs])
@@ -132,9 +149,16 @@ async def handle_training_nav(event, payload: str, user_id: int, bot, context: M
             return
         training_service.advance_to_next_week(session.id)
         session = training_service.get_active_session(user_id)
-        text = f"➡️ Переход на неделю {session.week_number}\n\n{training_service.get_training_status(session)}"
+        gender = _user_gender(user_id)
+        goal = _user_goal(user_id)
+        parts = [f"➡️ Переход на неделю {session.week_number}"]
+        transition = get_week_transition_text(goal, session.week_number, gender)
+        if transition:
+            parts.append(transition)
+        parts.append(training_service.get_training_status(session, gender))
+        text = "\n\n".join(parts)
         kb = build_training_keyboard()
-        await send_with_keyboard(bot, user_id, text, kb)
+        await send_long_message(bot, user_id, text, attachments=[kb.as_markup()])
 
     elif action == "prev_week":
         session = training_service.get_active_session(user_id)
@@ -143,7 +167,10 @@ async def handle_training_nav(event, payload: str, user_id: int, bot, context: M
             return
         if training_service.go_to_previous_week(session):
             session = training_service.get_active_session(user_id)
-            text = f"⬅️ Возврат на неделю {session.week_number}\n\n{training_service.get_training_status(session)}"
+            text = (
+                f"⬅️ Возврат на неделю {session.week_number}\n\n"
+                f"{training_service.get_training_status(session, _user_gender(user_id))}"
+            )
             kb = build_training_keyboard()
             await send_with_keyboard(bot, user_id, text, kb)
         else:
@@ -167,13 +194,17 @@ async def handle_health_selection(event, payload: str, user_id: int, bot, contex
         await bot.send_message(user_id=user_id, text=TEXT_NO_ACTIVE_SESSION)
         return
 
-    exercises, text = training_service.get_day_exercises(session, pain_type, _user_goal(user_id))
+    gender = _user_gender(user_id)
+    exercises, text = training_service.get_day_exercises(
+        session, pain_type, _user_goal(user_id), gender,
+    )
     if not exercises:
         kb = build_training_keyboard()
         await send_with_keyboard(bot, user_id, text, kb)
         return
 
-    header = f"📋 Упражнения дня — {TRAINING_TYPES.get(session.current_day, '')}:\n\n"
+    day_label = get_training_day_label(session.week_number, session.current_day, gender)
+    header = f"📋 Упражнения дня — {day_label}:\n\n"
     await bot.send_message(user_id=user_id, text=header + text)
 
     session_store.put(
@@ -218,6 +249,7 @@ async def _complete_training(user_id: int, bot, session, context: MemoryContext)
         session=session,
         collected_weights=weights_tuples,
         pain_feedback=pain,
+        gender=_user_gender(user_id),
     )
 
     session_store.remove(user_id, "weight_queue")

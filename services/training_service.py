@@ -3,8 +3,8 @@ from datetime import date
 from typing import Optional
 from core.models import TrainingSession
 from content.exercises import (
-    TRAINING_TYPES,
     get_exercises_for_day,
+    get_training_day_label,
     filter_exercises_by_pain,
     format_exercise_list,
     week_has_training_plan,
@@ -34,24 +34,25 @@ def create_session(user_id: int, training_days: str) -> int:
     return session_id
 
 
-def get_training_status(session: TrainingSession) -> str:
+def get_training_status(session: TrainingSession, gender: str | None = None) -> str:
+    day_label = get_training_day_label(session.week_number, session.current_day, gender)
     return (
         f"📊 Статус тренировок:\n\n"
         f"📅 Неделя: {session.week_number}\n"
         f"🗓 Дни тренировок: {session.training_days}\n"
         f"✅ Выполнено: {session.completed_days}/3\n"
-        f"📌 Текущий день: {TRAINING_TYPES.get(session.current_day, 'N/A')}"
+        f"📌 Текущий день: {day_label}"
     )
 
 
-def get_schedule_text(session: TrainingSession) -> str:
+def get_schedule_text(session: TrainingSession, gender: str | None = None) -> str:
     lines = [
         f"📅 Расписание — Неделя {session.week_number}",
         f"🗓 Дни: {session.training_days}\n",
     ]
     for day_idx in range(3):
         status = "✅" if day_idx < session.completed_days else ("⏳" if day_idx == session.completed_days else "⭕")
-        day_name = TRAINING_TYPES.get(day_idx, f"День {day_idx + 1}")
+        day_name = get_training_day_label(session.week_number, day_idx, gender)
         lines.append(f"{status} {day_name}")
     return "\n".join(lines)
 
@@ -60,13 +61,14 @@ def get_day_exercises(
     session: TrainingSession,
     pain_type: Optional[str] = None,
     goal: Optional[str] = None,
+    gender: Optional[str] = None,
 ):
     """Returns (exercises_list, formatted_text) or (None, error_text)."""
     goal_key = goal or "дефицит"
     week = session.week_number
-    if not week_has_training_plan(goal_key, week):
+    if not week_has_training_plan(goal_key, week, gender):
         return None, TEXT_EXERCISES_WEEK_STUB.format(week=week)
-    exercises = get_exercises_for_day(goal_key, week, session.current_day)
+    exercises = get_exercises_for_day(goal_key, week, session.current_day, gender)
     if not exercises:
         return None, f"❌ Упражнения для недели {week}, день {session.current_day + 1} не заполнены."
     if pain_type and pain_type != "healthy":
@@ -75,12 +77,16 @@ def get_day_exercises(
     return exercises, text
 
 
-def complete_training(user_id: int, session: TrainingSession,
-                      collected_weights: list[tuple[int, str, float]] | None = None,
-                      pain_feedback: str | None = None) -> dict:
+def complete_training(
+    user_id: int,
+    session: TrainingSession,
+    collected_weights: list[tuple[int, str, float]] | None = None,
+    pain_feedback: str | None = None,
+    gender: str | None = None,
+) -> dict:
     """Mark training complete. Returns dict with status info."""
     today_str = date.today().isoformat()
-    training_type = TRAINING_TYPES.get(session.current_day, "")
+    training_type = get_training_day_label(session.week_number, session.current_day, gender)
 
     training_log_repo.add_training_log(
         user_id=user_id,

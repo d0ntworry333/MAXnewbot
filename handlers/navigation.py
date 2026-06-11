@@ -100,10 +100,11 @@ async def _handle_nav(event, payload: str, user_id: int, bot, context: MemoryCon
         profile = user_service.get_latest_profile(user_id)
         if profile:
             week = training_service.resolve_user_week(user_id)
+            calories = user_service.get_target_calories(profile, week)
             text = (
                 f"🎯 Ваша цель: {profile.goal}\n"
                 f"📅 Неделя: {week}\n\n"
-                f"{get_nutrition_text(profile.goal, week)}"
+                f"{get_nutrition_text(profile.goal, week, calories)}"
             )
         else:
             text = f"❌ {TEXT_NO_FORMS}"
@@ -156,7 +157,9 @@ async def _show_training_workspace(user_id: int, bot) -> None:
     """Меню активной сессии или выбор дней, если сессии ещё нет."""
     session = training_service.get_active_session(user_id)
     if session:
-        text = training_service.get_training_status(session)
+        profile = user_service.get_latest_profile(user_id)
+        gender = profile.gender if profile else None
+        text = training_service.get_training_status(session, gender)
         kb = build_training_keyboard()
         await send_with_keyboard(bot, user_id, text, kb)
     else:

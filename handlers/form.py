@@ -13,7 +13,7 @@ from handlers.states import FormStates
 from handlers import session_store
 from services import user_service
 from core.validators import parse_height, parse_weight, parse_age
-from content.texts import get_nutrition_text, TEXT_FORM_CANCELLED
+from content.texts import get_nutrition_text, format_useful_bmr, TEXT_FORM_CANCELLED
 from transport.max.keyboards import (
     build_activity_keyboard, build_gender_keyboard, build_goal_keyboard,
     build_cancel_keyboard, build_main_keyboard, build_anketa_keyboard,
@@ -120,9 +120,8 @@ async def _finish_full_form(user_id: int, bot, context: MemoryContext, event) ->
         f"🏃 Активность: {form['activity_level']}\n"
         f"👤 Пол: {form['gender']}\n"
         f"🎂 Возраст: {form['age']}\n"
-        f"🎯 Цель: {form['goal']}\n"
-        f"🔥 Ваш БМР: {bmr} ккал\n\n"
-        f"{get_nutrition_text(form['goal'], week_number=1)}"
+        f"🎯 Цель: {form['goal']}\n\n"
+        f"{get_nutrition_text(form['goal'], week_number=1, calories=bmr)}"
     )
 
     session_store.remove(user_id, "form_data")
@@ -152,7 +151,7 @@ async def _finish_short_form(user_id: int, bot, context: MemoryContext) -> None:
         "✅ Анкета обновлена!\n\n"
         f"⚖️ Вес: {form['weight']} кг\n"
         f"🏃 Активность: {form['activity_level']}\n"
-        f"🔥 Ваш БМР: {bmr} ккал"
+        f"{format_useful_bmr(bmr)}"
     )
 
     session_store.remove(user_id, "form_data")

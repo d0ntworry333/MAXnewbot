@@ -5,11 +5,24 @@ ACTIVITY_MULTIPLIERS = {
     "Низкая": 1.2,
 }
 
-# Множитель цели применяется после коэффициента активности (формула Миффлина — Сан Жеора).
-GOAL_MULTIPLIERS = {
+# Вводный этап (недели 1–2): активность из анкеты × множитель цели.
+GOAL_MULTIPLIERS_INTRO = {
     "дефицит": {"Мужской": 0.95, "Женский": 0.95},
     "профицит": {"Мужской": 1.15, "Женский": 1.1},
 }
+
+# Основной этап (недели 3+): фиксированная «Средняя» активность 1.375 × множитель цели.
+MAIN_STAGE_ACTIVITY = 1.375
+GOAL_MULTIPLIERS_MAIN = {
+    "дефицит": {"Мужской": 0.9, "Женский": 0.95},
+    "профицит": {"Мужской": 1.25, "Женский": 1.15},
+}
+
+
+def _mifflin_base(weight: float, height: float, age: int, gender: str) -> float:
+    if gender == "Мужской":
+        return (10 * weight) + (6.25 * height) - (5 * age) + 5
+    return (10 * weight) + (6.25 * height) - (5 * age) - 161
 
 
 def calculate_bmr(
@@ -19,16 +32,18 @@ def calculate_bmr(
     gender: str,
     activity_level: str,
     goal: str | None = None,
+    week: int = 1,
 ) -> float:
-    """Суточная норма: база Миффлина — Сан Жеора × активность × множитель цели."""
+    """Суточная норма калорий по формуле Миффлина — Сан Жеора."""
+    base = _mifflin_base(weight, height, age, gender)
+    if week >= 3 and goal:
+        tdee = base * MAIN_STAGE_ACTIVITY
+        goal_mult = GOAL_MULTIPLIERS_MAIN.get(goal, {}).get(gender, 1.0)
+        return round(tdee * goal_mult, 2)
     multiplier = ACTIVITY_MULTIPLIERS.get(activity_level, 1.2)
-    if gender == "Мужской":
-        base = (10 * weight) + (6.25 * height) - (5 * age) + 5
-    else:
-        base = (10 * weight) + (6.25 * height) - (5 * age) - 161
     tdee = base * multiplier
     if goal:
-        goal_mult = GOAL_MULTIPLIERS.get(goal, {}).get(gender, 1.0)
+        goal_mult = GOAL_MULTIPLIERS_INTRO.get(goal, {}).get(gender, 1.0)
         tdee *= goal_mult
     return round(tdee, 2)
 

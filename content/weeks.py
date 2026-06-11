@@ -3,7 +3,10 @@
 MAX_PROGRAM_WEEKS = 8
 
 # Недели с полным контентом от заказчика (остальные — заглушки).
-WEEKS_WITH_FULL_CONTENT = frozenset({1, 2})
+WEEKS_WITH_FULL_CONTENT = frozenset({1, 2, 3, 4})
+
+# Недели 3–4 — один блок методички «основной этап».
+MAIN_STAGE_WEEKS = frozenset({3, 4})
 
 
 def clamp_week(week: int | None) -> int:

@@ -134,6 +134,26 @@ EXERCISES: list[ExerciseDefinition] = [
             "⚠️ Обратный хват сильнее нагружает бицепс — следите за локтями."
         ),
     ),
+    # ── Основной этап (недели 3–4), тренажёрный зал ──
+    ExerciseDefinition(9, "Бабочка", "Сведение рук в тренажёре «бабочка» — грудные мышцы", ["грудь"], "🔹 Бабочка: сводите локти плавно, не бросайте вес в крайних точках."),
+    ExerciseDefinition(10, "Подтягивания", "Подтягивания на перекладине — спина, бицепс", ["спина", "руки"], "🔹 Подтягивания: грудь к перекладине, контролируйте негативную фазу 1–1,5 сек."),
+    ExerciseDefinition(11, "Жим гантелей сидя", "Жим гантелей сидя — передние дельты", ["плечи", "руки"], "🔹 Жим сидя: лопатки сведены, не прогибайте поясницу."),
+    ExerciseDefinition(12, "Махи гантелей в стороны", "Разведение гантелей в стороны — средние дельты", ["плечи"], "🔹 Махи в стороны: локти слегка согнуты, поднимайте до уровня плеч."),
+    ExerciseDefinition(13, "Строгий подъём на бицепс сидя", "Сгибание рук с гантелями сидя — бицепс", ["руки"], "🔹 Строгий подъём: локти зафиксированы, без раскачки корпуса."),
+    ExerciseDefinition(14, "Разгибания ног", "Разгибание ног в тренажёре — квадрицепс", ["ноги"], "🔹 Разгибания ног: плавное движение, не блокируйте колени резко."),
+    ExerciseDefinition(15, "Сгибания ног лёжа", "Сгибание ног лёжа — бицепс бедра", ["ноги"], "🔹 Сгибания лёжа: бедро не отрывается от скамьи."),
+    ExerciseDefinition(16, "Разведение ног в тренажёре", "Разведение ног сидя — средняя ягодичная", ["ноги"], "🔹 Разведение ног: корпус прижат к спинке, работайте ягодицами."),
+    ExerciseDefinition(17, "Сведение ног в тренажёре", "Сведение ног сидя — приводящие мышцы", ["ноги"], "🔹 Сведение ног: контролируйте возврат, не бросайте вес."),
+    ExerciseDefinition(18, "Румынская тяга", "Румынская тяга — бицепс бедра, ягодицы", ["ноги", "спина"], "🔹 Румынская тяга: спина прямая, таз назад, вес по бёдрам."),
+    ExerciseDefinition(19, "Подъёмы на носки", "Подъёмы на икры стоя или сидя", ["ноги"], "🔹 Подъёмы на носки: полная амплитуда, пауза в верхней точке."),
+    ExerciseDefinition(20, "Жим гантелей в наклоне", "Жим гантелей на наклонной скамье — верх груди", ["грудь", "руки"], "🔹 Жим в наклоне: лопатки сведены, локти под углом ~45°."),
+    ExerciseDefinition(21, "Y-разводка", "Разведение рук в плоскости Y — задние дельты", ["плечи", "спина"], "🔹 Y-разводка: грудь на скамье, поднимайте руки по дуге."),
+    ExerciseDefinition(22, "Тяга штанги к поясу", "Тяга штанги в наклоне к поясу — спина", ["спина", "руки"], "🔹 Тяга к поясу: спина прямая, тяните локтями к бёдрам."),
+    ExerciseDefinition(23, "Пуловер в кроссовере", "Пуловер в блочном тренажёре — грудь, широчайшие", ["грудь", "спина"], "🔹 Пуловер: руки слегка согнуты, растягивайте грудь внизу."),
+    ExerciseDefinition(24, "Разгибание рук в кроссовере", "Разгибание рук на блоке — трицепс", ["руки"], "🔹 Разгибание на блоке: локти прижаты, не раскачивайтесь."),
+    ExerciseDefinition(25, "Французский жим", "Разгибание рук из-за головы — трицепс", ["руки"], "🔹 Французский жим: локти смотрят вверх, опускайте вес подконтрольно."),
+    ExerciseDefinition(26, "Рычажная тяга", "Тяга в рычажном тренажёре — спина", ["спина", "руки"], "🔹 Рычажная тяга: сводите лопатки, не отклоняйтесь назад."),
+    ExerciseDefinition(27, "Ягодичный мостик", "Ягодичный мостик — ягодицы, задняя поверхность бедра", ["ноги"], "🔹 Мостик: пятки на полу, вверху сожмите ягодицы на 1–2 сек."),
 ]
 
 EXERCISE_BY_ID: dict[int, ExerciseDefinition] = {e.id: e for e in EXERCISES}
@@ -144,14 +164,14 @@ class DayExercise:
     """Упражнение дня с подходами и повторениями."""
     exercise: ExerciseDefinition
     sets: int
-    reps: int
+    reps: int | str
 
     @property
     def prescription(self) -> str:
         return f"{self.sets}×{self.reps}"
 
 
-def _plan(*items: tuple[int, int, int]) -> list[DayExercise]:
+def _plan(*items: tuple[int, int, int | str]) -> list[DayExercise]:
     """(exercise_id, sets, reps) → список DayExercise."""
     result: list[DayExercise] = []
     for eid, sets, reps in items:
@@ -162,7 +182,7 @@ def _plan(*items: tuple[int, int, int]) -> list[DayExercise]:
 
 
 # Недели 1–2: одинаковый план для дефицита и профицита (по методичке заказчика).
-_WEEKS_1_2: dict[int, dict[int, list[DayExercise]]] = {
+WEEKLY_PLANS_INTRO: dict[int, dict[int, list[DayExercise]]] = {
     1: {
         0: _plan((1, 2, 10), (2, 3, 8), (3, 4, 10), (4, 2, 8), (5, 2, 8)),
         1: _plan((6, 3, 18), (7, 3, 8), (3, 4, 10), (8, 2, 8), (5, 2, 8)),
@@ -175,25 +195,77 @@ _WEEKS_1_2: dict[int, dict[int, list[DayExercise]]] = {
     },
 }
 
-# Недели 3–8: заглушки (пустые планы — контент добавит заказчик).
-_WEEKS_STUB: dict[int, dict[int, list[DayExercise]]] = {
-    week: {} for week in range(3, MAX_PROGRAM_WEEKS + 1)
+# Недели 3–4: сплит Верх/Низ (мужчины) и Низ/Верх/Низ (женщины).
+_MEN_SURPLUS_W34 = {
+    0: _plan((9, 2, 10), (10, 3, 10), (11, 2, "6-8"), (7, 3, 8), (12, 3, "10-12"), (13, 2, 10), (5, 2, "10-15")),
+    1: _plan((14, 4, 10), (15, 3, 10), (16, 2, 10), (17, 2, "10-12"), (1, 2, 10), (18, 2, 10), (19, 2, "12-15")),
+    2: _plan((20, 2, 10), (21, 3, "10-12"), (22, 2, 10), (23, 2, 10), (7, 3, 10), (13, 2, 10), (24, 2, 10)),
+}
+_MEN_DEFICIT_W34 = {
+    0: _plan((7, 3, "10-12"), (10, 3, "8-10"), (12, 3, "10-12"), (13, 2, 10), (25, 2, 10), (5, 3, "10-15")),
+    1: _plan((14, 3, 10), (15, 3, 10), (17, 2, "10-12"), (1, 2, 10), (19, 3, "12-15")),
+    2: _plan((20, 3, 10), (21, 3, "10-12"), (23, 3, 10), (7, 2, 10), (13, 2, 10), (26, 3, 10)),
+}
+_WOMEN_LOWER_UPPER_W34 = {
+    0: _plan((14, 2, 10), (16, 3, 10), (15, 2, 10), (27, 2, 10), (19, 2, "12-15")),
+    1: _plan((3, 2, "10-12"), (12, 3, 10), (23, 2, 10), (7, 2, 10), (13, 2, 10), (5, 2, "10-12")),
+    2: _plan((1, 2, 10), (15, 2, 10), (16, 3, 10), (17, 2, 10), (27, 2, 10)),
 }
 
-_ALL_WEEKS: dict[int, dict[int, list[DayExercise]]] = {**_WEEKS_1_2, **_WEEKS_STUB}
 
-WEEKLY_PLANS_BY_GOAL: dict[str, dict[int, dict[int, list[DayExercise]]]] = {
-    "дефицит": _ALL_WEEKS,
-    "профицит": _ALL_WEEKS,
+def _weeks_3_4(plan: dict[int, list[DayExercise]]) -> dict[int, dict[int, list[DayExercise]]]:
+    return {3: plan, 4: plan}
+
+
+WEEKLY_PLANS_MAIN_STAGE: dict[str, dict[str, dict[int, dict[int, list[DayExercise]]]]] = {
+    "дефицит": {
+        "Мужской": _weeks_3_4(_MEN_DEFICIT_W34),
+        "Женский": _weeks_3_4(_WOMEN_LOWER_UPPER_W34),
+    },
+    "профицит": {
+        "Мужской": _weeks_3_4(_MEN_SURPLUS_W34),
+        "Женский": _weeks_3_4(_WOMEN_LOWER_UPPER_W34),
+    },
 }
 
 DEFAULT_GOAL = "дефицит"
+DEFAULT_GENDER = "Мужской"
 
-TRAINING_TYPES: dict[int, str] = {
+TRAINING_TYPES_INTRO: dict[int, str] = {
     0: "День 1: Грудь, Плечи, Трицепс",
     1: "День 2: Спина, Бицепс",
     2: "День 3: Ноги и Кор",
 }
+
+TRAINING_TYPES_MALE_MAIN: dict[int, str] = {
+    0: "День 1: Верх",
+    1: "День 2: Низ",
+    2: "День 3: Верх",
+}
+
+TRAINING_TYPES_FEMALE_MAIN: dict[int, str] = {
+    0: "День 1: Низ",
+    1: "День 2: Верх",
+    2: "День 3: Низ",
+}
+
+# Обратная совместимость
+TRAINING_TYPES = TRAINING_TYPES_INTRO
+
+
+def _normalize_gender(gender: str | None) -> str:
+    if gender in ("Мужской", "Женский"):
+        return gender
+    return DEFAULT_GENDER
+
+
+def get_training_day_label(week: int, day: int, gender: str | None = None) -> str:
+    w = clamp_week(week)
+    if w <= 2:
+        return TRAINING_TYPES_INTRO.get(day, f"День {day + 1}")
+    g = _normalize_gender(gender)
+    types = TRAINING_TYPES_FEMALE_MAIN if g == "Женский" else TRAINING_TYPES_MALE_MAIN
+    return types.get(day, f"День {day + 1}")
 
 DAYS_MAPPING: dict[str, list[int]] = {
     "Пн-Ср-Пт": [0, 2, 4],
@@ -208,18 +280,28 @@ PAIN_FILTER: dict[str, str] = {
 }
 
 
-def week_has_training_plan(goal: str, week: int) -> bool:
+def _week_plan(goal: str, week: int, gender: str | None) -> dict[int, list[DayExercise]]:
+    goal_key = goal if goal in WEEKLY_PLANS_MAIN_STAGE else DEFAULT_GOAL
+    w = clamp_week(week)
+    if w <= 2:
+        return WEEKLY_PLANS_INTRO.get(w, {})
+    g = _normalize_gender(gender)
+    return WEEKLY_PLANS_MAIN_STAGE[goal_key][g].get(w, {})
+
+
+def week_has_training_plan(goal: str, week: int, gender: str | None = None) -> bool:
     """Есть ли заполненная программа тренировок на неделю."""
-    goal_key = goal if goal in WEEKLY_PLANS_BY_GOAL else DEFAULT_GOAL
-    week_plan = WEEKLY_PLANS_BY_GOAL[goal_key].get(clamp_week(week), {})
-    return bool(week_plan)
+    return bool(_week_plan(goal, week, gender))
 
 
-def get_exercises_for_day(goal: str, week: int, day: int) -> list[DayExercise]:
-    """Упражнения на день с учётом цели (дефицит / профицит) и номера недели."""
-    goal_key = goal if goal in WEEKLY_PLANS_BY_GOAL else DEFAULT_GOAL
-    week_plan = WEEKLY_PLANS_BY_GOAL[goal_key].get(clamp_week(week), {})
-    return list(week_plan.get(day, []))
+def get_exercises_for_day(
+    goal: str,
+    week: int,
+    day: int,
+    gender: str | None = None,
+) -> list[DayExercise]:
+    """Упражнения на день: цель, неделя, день, пол (для недель 3+)."""
+    return list(_week_plan(goal, week, gender).get(day, []))
 
 
 def filter_exercises_by_pain(exercises: list[DayExercise], pain_type: str) -> list[DayExercise]:
