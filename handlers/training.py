@@ -12,10 +12,10 @@ from maxapi.context import MemoryContext
 
 from handlers.states import TrainingStates
 from handlers import session_store
-from services import training_service, exercise_service
+from services import training_service, exercise_service, user_service
 from core.validators import parse_exercise_weight, parse_body_weight
 from content.texts import TEXT_NO_ACTIVE_SESSION, TEXT_TRAINING_COMPLETE, TEXT_ALL_WEIGHTS_RECORDED, TEXT_ALREADY_WEEK_1
-from content.exercises import TRAINING_TYPES, get_exercises_for_day, format_exercise_list
+from content.exercises import TRAINING_TYPES, EXERCISE_BY_ID
 from transport.max.keyboards import (
     build_training_keyboard,
     build_health_keyboard,
@@ -34,6 +34,11 @@ DAYS_MAP = {
     "tue_thu_sat": "Вт-Чт-Сб",
     "wed_fri_sun": "Ср-Пт-Вс",
 }
+
+
+def _user_goal(user_id: int) -> str:
+    profile = user_service.get_latest_profile(user_id)
+    return profile.goal if profile else "дефицит"
 
 
 async def handle_days_selection(event, payload: str, user_id: int, bot) -> None:
@@ -106,10 +111,11 @@ async def handle_training_nav(event, payload: str, user_id: int, bot, context: M
             await bot.send_message(user_id=user_id, text=TEXT_NO_ACTIVE_SESSION)
             return
         pain = session_store.get(user_id, "pain_type", "healthy")
-        exercises, text = training_service.get_day_exercises(session, pain)
+        exercises, text = training_service.get_day_exercises(session, pain, _user_goal(user_id))
         if exercises:
-            session_store.put(user_id, "technique_exercises", [e.id for e in exercises])
-            kb = build_technique_keyboard(exercises)
+            defs = [e.exercise for e in exercises]
+            session_store.put(user_id, "technique_exercises", [e.id for e in defs])
+            kb = build_technique_keyboard(defs)
             await send_with_keyboard(bot, user_id, "🧠 Выберите упражнение для просмотра техники:", kb)
         else:
             kb = build_training_keyboard()
@@ -161,7 +167,7 @@ async def handle_health_selection(event, payload: str, user_id: int, bot, contex
         await bot.send_message(user_id=user_id, text=TEXT_NO_ACTIVE_SESSION)
         return
 
-    exercises, text = training_service.get_day_exercises(session, pain_type)
+    exercises, text = training_service.get_day_exercises(session, pain_type, _user_goal(user_id))
     if not exercises:
         kb = build_training_keyboard()
         await send_with_keyboard(bot, user_id, text, kb)
@@ -170,11 +176,15 @@ async def handle_health_selection(event, payload: str, user_id: int, bot, contex
     header = f"📋 Упражнения дня — {TRAINING_TYPES.get(session.current_day, '')}:\n\n"
     await bot.send_message(user_id=user_id, text=header + text)
 
-    session_store.put(user_id, "weight_queue", [(e.id, e.name) for e in exercises])
+    session_store.put(
+        user_id,
+        "weight_queue",
+        [(item.exercise.id, item.exercise.name) for item in exercises],
+    )
     session_store.put(user_id, "weight_index", 0)
     session_store.put(user_id, "collected_weights", [])
 
-    first_ex = exercises[0]
+    first_ex = exercises[0].exercise
     await context.set_state(TrainingStates.collecting_exercise_weight)
     await bot.send_message(
         user_id=user_id,
@@ -191,7 +201,6 @@ async def handle_technique_selection(event, payload: str, user_id: int, bot) -> 
 
     text = exercise_service.get_technique_text(exercise_id)
     exercises_ids = session_store.get(user_id, "technique_exercises", [])
-    from content.exercises import EXERCISE_BY_ID
     exercises = [EXERCISE_BY_ID[eid] for eid in exercises_ids if eid in EXERCISE_BY_ID]
 
     kb = build_technique_keyboard(exercises) if exercises else build_training_keyboard()

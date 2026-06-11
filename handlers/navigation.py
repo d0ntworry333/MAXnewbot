@@ -21,11 +21,12 @@ from handlers.show import handle_show_callback
 
 from services import user_service, training_service
 from content.texts import (
-    TEXT_RECOVERY,
     TEXT_ACHIEVEMENTS_STUB,
     TEXT_NO_ACTIVE_SESSION,
-    TEXT_TRAINING_PROGRAM,
-    get_diet_text,
+    TEXT_NO_FORMS,
+    get_nutrition_text,
+    get_recovery_text,
+    get_training_rules_text,
 )
 from transport.max.keyboards import (
     build_menu_keyboard,
@@ -98,15 +99,26 @@ async def _handle_nav(event, payload: str, user_id: int, bot, context: MemoryCon
     elif dest == "diet":
         profile = user_service.get_latest_profile(user_id)
         if profile:
-            text = f"🎯 Ваша цель: {profile.goal}\n\n{get_diet_text(profile.goal)}"
+            week = training_service.resolve_user_week(user_id)
+            text = (
+                f"🎯 Ваша цель: {profile.goal}\n"
+                f"📅 Неделя: {week}\n\n"
+                f"{get_nutrition_text(profile.goal, week)}"
+            )
         else:
-            text = "❌ Сначала заполните анкету, чтобы получить рекомендации по питанию."
+            text = f"❌ {TEXT_NO_FORMS}"
         kb = build_main_keyboard()
         await send_long_message(bot, user_id, text, attachments=[kb.as_markup()])
 
     elif dest == "recovery":
+        profile = user_service.get_latest_profile(user_id)
+        if profile:
+            week = training_service.resolve_user_week(user_id)
+            text = get_recovery_text(profile.goal, week)
+        else:
+            text = "❌ Сначала заполните анкету, чтобы получить рекомендации по восстановлению."
         kb = build_main_keyboard()
-        await send_with_keyboard(bot, user_id, TEXT_RECOVERY, kb)
+        await send_with_keyboard(bot, user_id, text, kb)
 
     elif dest == "training":
         kb = build_training_hub_keyboard()
@@ -118,11 +130,17 @@ async def _handle_nav(event, payload: str, user_id: int, bot, context: MemoryCon
         )
 
     elif dest == "training_rules":
+        profile = user_service.get_latest_profile(user_id)
+        rules_text = (
+            get_training_rules_text(profile.goal, training_service.resolve_user_week(user_id))
+            if profile
+            else "❌ Сначала заполните анкету, чтобы увидеть правила тренировок для вашей цели."
+        )
         kb = build_training_rules_keyboard()
         await send_long_message(
             bot,
             user_id,
-            TEXT_TRAINING_PROGRAM,
+            rules_text,
             attachments=[kb.as_markup()],
         )
 

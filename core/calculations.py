@@ -5,15 +5,32 @@ ACTIVITY_MULTIPLIERS = {
     "Низкая": 1.2,
 }
 
+# Множитель цели применяется после коэффициента активности (формула Миффлина — Сан Жеора).
+GOAL_MULTIPLIERS = {
+    "дефицит": {"Мужской": 0.95, "Женский": 0.95},
+    "профицит": {"Мужской": 1.15, "Женский": 1.1},
+}
 
-def calculate_bmr(weight: float, height: float, age: int, gender: str, activity_level: str) -> float:
-    """Mifflin-St Jeor equation adjusted by activity multiplier."""
+
+def calculate_bmr(
+    weight: float,
+    height: float,
+    age: int,
+    gender: str,
+    activity_level: str,
+    goal: str | None = None,
+) -> float:
+    """Суточная норма: база Миффлина — Сан Жеора × активность × множитель цели."""
     multiplier = ACTIVITY_MULTIPLIERS.get(activity_level, 1.2)
     if gender == "Мужской":
         base = (10 * weight) + (6.25 * height) - (5 * age) + 5
     else:
         base = (10 * weight) + (6.25 * height) - (5 * age) - 161
-    return round(base * multiplier, 2)
+    tdee = base * multiplier
+    if goal:
+        goal_mult = GOAL_MULTIPLIERS.get(goal, {}).get(gender, 1.0)
+        tdee *= goal_mult
+    return round(tdee, 2)
 
 
 def calculate_bmi(weight: float, height: float) -> float:

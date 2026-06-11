@@ -2,7 +2,15 @@ import logging
 from datetime import date
 from typing import Optional
 from core.models import TrainingSession
-from content.exercises import TRAINING_TYPES, get_exercises_for_day, filter_exercises_by_pain, format_exercise_list
+from content.exercises import (
+    TRAINING_TYPES,
+    get_exercises_for_day,
+    filter_exercises_by_pain,
+    format_exercise_list,
+    week_has_training_plan,
+)
+from content.texts import TEXT_EXERCISES_WEEK_STUB
+from content.weeks import clamp_week
 from repositories import session_repo, training_log_repo, exercise_weight_repo, body_weight_repo
 
 logger = logging.getLogger(__name__)
@@ -10,6 +18,14 @@ logger = logging.getLogger(__name__)
 
 def get_active_session(user_id: int) -> Optional[TrainingSession]:
     return session_repo.get_active_session(user_id)
+
+
+def resolve_user_week(user_id: int) -> int:
+    """Текущая неделя цикла: из активной сессии или 1 по умолчанию."""
+    session = session_repo.get_active_session(user_id)
+    if session:
+        return clamp_week(session.week_number)
+    return 1
 
 
 def create_session(user_id: int, training_days: str) -> int:
@@ -40,11 +56,19 @@ def get_schedule_text(session: TrainingSession) -> str:
     return "\n".join(lines)
 
 
-def get_day_exercises(session: TrainingSession, pain_type: Optional[str] = None):
+def get_day_exercises(
+    session: TrainingSession,
+    pain_type: Optional[str] = None,
+    goal: Optional[str] = None,
+):
     """Returns (exercises_list, formatted_text) or (None, error_text)."""
-    exercises = get_exercises_for_day(session.week_number, session.current_day)
+    goal_key = goal or "дефицит"
+    week = session.week_number
+    if not week_has_training_plan(goal_key, week):
+        return None, TEXT_EXERCISES_WEEK_STUB.format(week=week)
+    exercises = get_exercises_for_day(goal_key, week, session.current_day)
     if not exercises:
-        return None, f"❌ Упражнения для недели {session.week_number}, день {session.current_day + 1} не заполнены."
+        return None, f"❌ Упражнения для недели {week}, день {session.current_day + 1} не заполнены."
     if pain_type and pain_type != "healthy":
         exercises = filter_exercises_by_pain(exercises, pain_type)
     text = format_exercise_list(exercises)

@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 def create_full_profile(user_id: int, username: str, height: float, weight: float,
                         activity_level: str, gender: str, age: int, goal: str) -> float:
     """Create a full user profile. Returns calculated BMR."""
-    bmr = calculate_bmr(weight, height, age, gender, activity_level)
+    bmr = calculate_bmr(weight, height, age, gender, activity_level, goal)
     user_repo.add_user(user_id, username, height, weight, activity_level, gender, age, bmr, goal)
     logger.info("Created full profile for user %d, BMR=%.2f", user_id, bmr)
     return bmr
@@ -21,7 +21,7 @@ def create_short_profile(user_id: int, username: str, weight: float, activity_le
     first = user_repo.get_first_profile(user_id)
     if not first:
         return None
-    bmr = calculate_bmr(weight, first.height, first.age, first.gender, activity_level)
+    bmr = calculate_bmr(weight, first.height, first.age, first.gender, activity_level, first.goal)
     user_repo.add_user(user_id, username, first.height, weight, activity_level,
                        first.gender, first.age, bmr, first.goal)
     logger.info("Created short profile for user %d, BMR=%.2f", user_id, bmr)
