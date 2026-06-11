@@ -154,6 +154,12 @@ EXERCISES: list[ExerciseDefinition] = [
     ExerciseDefinition(25, "Французский жим", "Разгибание рук из-за головы — трицепс", ["руки"], "🔹 Французский жим: локти смотрят вверх, опускайте вес подконтрольно."),
     ExerciseDefinition(26, "Рычажная тяга", "Тяга в рычажном тренажёре — спина", ["спина", "руки"], "🔹 Рычажная тяга: сводите лопатки, не отклоняйтесь назад."),
     ExerciseDefinition(27, "Ягодичный мостик", "Ягодичный мостик — ягодицы, задняя поверхность бедра", ["ноги"], "🔹 Мостик: пятки на полу, вверху сожмите ягодицы на 1–2 сек."),
+    ExerciseDefinition(
+        28, "Тяга верхнего блока к груди",
+        "Вертикальная тяга на блоке — широчайшие, бицепс",
+        ["спина", "руки"],
+        "🔹 Тяга блока к груди: сводите лопатки, тяните локтями вниз, не раскачивайтесь.",
+    ),
 ]
 
 EXERCISE_BY_ID: dict[int, ExerciseDefinition] = {e.id: e for e in EXERCISES}
@@ -213,18 +219,58 @@ _WOMEN_LOWER_UPPER_W34 = {
 }
 
 
-def _weeks_3_4(plan: dict[int, list[DayExercise]]) -> dict[int, dict[int, list[DayExercise]]]:
-    return {3: plan, 4: plan}
+def _weeks_bundle(
+    week_numbers: tuple[int, ...],
+    plan: dict[int, list[DayExercise]],
+) -> dict[int, dict[int, list[DayExercise]]]:
+    return {w: plan for w in week_numbers}
 
+
+def _merge_week_plans(*parts: dict[int, dict[int, list[DayExercise]]]) -> dict[int, dict[int, list[DayExercise]]]:
+    merged: dict[int, dict[int, list[DayExercise]]] = {}
+    for part in parts:
+        merged.update(part)
+    return merged
+
+
+# Неделя 8: разгрузка, 2 тренировки фулбади.
+_MEN_DEFICIT_W8 = {
+    0: _plan((14, 2, 10), (28, 2, 10), (20, 2, 10), (12, 2, 12), (13, 2, 10), (5, 2, 12)),
+    1: _plan((15, 2, 10), (26, 2, 10), (2, 2, 10), (21, 2, 12), (25, 2, 10)),
+}
+_WOMEN_DEFICIT_W8 = {
+    0: _plan((27, 2, 10), (3, 2, 10), (16, 2, 12), (12, 2, 12), (5, 2, 12)),
+    1: _plan((18, 2, 10), (23, 2, 10), (17, 2, 12), (2, 2, 10), (19, 2, 15)),
+}
+_MEN_SURPLUS_W8 = {
+    0: _plan((14, 2, 10), (28, 2, 10), (20, 2, 10), (12, 2, 12), (13, 2, 10), (5, 2, 12)),
+    1: _plan((15, 2, 10), (26, 2, 10), (20, 2, 12), (21, 2, 12), (25, 2, 10)),
+}
+_WOMEN_SURPLUS_W8 = {
+    0: _plan((27, 2, 10), (3, 2, 10), (16, 2, 12), (12, 2, 12), (5, 2, 12)),
+    1: _plan((18, 2, 10), (23, 2, 10), (17, 2, 12), (2, 2, 10), (19, 2, 15)),
+}
 
 WEEKLY_PLANS_MAIN_STAGE: dict[str, dict[str, dict[int, dict[int, list[DayExercise]]]]] = {
     "дефицит": {
-        "Мужской": _weeks_3_4(_MEN_DEFICIT_W34),
-        "Женский": _weeks_3_4(_WOMEN_LOWER_UPPER_W34),
+        "Мужской": _merge_week_plans(
+            _weeks_bundle((3, 4, 5, 6, 7), _MEN_DEFICIT_W34),
+            {8: _MEN_DEFICIT_W8},
+        ),
+        "Женский": _merge_week_plans(
+            _weeks_bundle((3, 4, 5, 6, 7), _WOMEN_LOWER_UPPER_W34),
+            {8: _WOMEN_DEFICIT_W8},
+        ),
     },
     "профицит": {
-        "Мужской": _weeks_3_4(_MEN_SURPLUS_W34),
-        "Женский": _weeks_3_4(_WOMEN_LOWER_UPPER_W34),
+        "Мужской": _merge_week_plans(
+            _weeks_bundle((3, 4, 5, 6, 7), _MEN_SURPLUS_W34),
+            {8: _MEN_SURPLUS_W8},
+        ),
+        "Женский": _merge_week_plans(
+            _weeks_bundle((3, 4, 5, 6, 7), _WOMEN_LOWER_UPPER_W34),
+            {8: _WOMEN_SURPLUS_W8},
+        ),
     },
 }
 
@@ -249,8 +295,18 @@ TRAINING_TYPES_FEMALE_MAIN: dict[int, str] = {
     2: "День 3: Низ",
 }
 
+TRAINING_TYPES_DELOAD: dict[int, str] = {
+    0: "День 1: Фулбади",
+    1: "День 2: Фулбади",
+}
+
 # Обратная совместимость
 TRAINING_TYPES = TRAINING_TYPES_INTRO
+
+
+def trainings_per_week(week: int) -> int:
+    """Сколько тренировок в неделе (на 8-й — разгрузка, 2 дня)."""
+    return 2 if clamp_week(week) == 8 else 3
 
 
 def _normalize_gender(gender: str | None) -> str:
@@ -261,6 +317,8 @@ def _normalize_gender(gender: str | None) -> str:
 
 def get_training_day_label(week: int, day: int, gender: str | None = None) -> str:
     w = clamp_week(week)
+    if w == 8:
+        return TRAINING_TYPES_DELOAD.get(day, f"День {day + 1}")
     if w <= 2:
         return TRAINING_TYPES_INTRO.get(day, f"День {day + 1}")
     g = _normalize_gender(gender)

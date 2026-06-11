@@ -3,10 +3,21 @@
 MAX_PROGRAM_WEEKS = 8
 
 # Недели с полным контентом от заказчика (остальные — заглушки).
-WEEKS_WITH_FULL_CONTENT = frozenset({1, 2, 3, 4})
+WEEKS_WITH_FULL_CONTENT = frozenset({1, 2, 3, 4, 5, 6, 7, 8})
 
-# Недели 3–4 — один блок методички «основной этап».
-MAIN_STAGE_WEEKS = frozenset({3, 4})
+# Блоки методички основного этапа.
+MAIN_STAGE_WEEKS_EARLY = frozenset({3, 4})
+MAIN_STAGE_WEEKS_MID = frozenset({5, 6})
+PEAK_WEEK = frozenset({7})
+DELOAD_WEEK = frozenset({8})
+
+
+def week_has_full_content_for_goal(goal: str, week: int) -> bool:
+    """Есть ли методичка для цели и недели (профицит нед. 7 пока без контента)."""
+    w = clamp_week(week)
+    if w == 7 and goal == "профицит":
+        return False
+    return w in WEEKS_WITH_FULL_CONTENT
 
 
 def clamp_week(week: int | None) -> int:

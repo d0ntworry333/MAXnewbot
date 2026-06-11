@@ -67,10 +67,12 @@ def handle_scheduled_check_response(log_id: int, session_id: int, user_id: int, 
     if completed:
         session = sr.get_active_session(user_id)
         if session:
+            from content.exercises import trainings_per_week
+            total = trainings_per_week(session.week_number)
             new_completed = session.completed_days + 1
-            new_day = (session.current_day + 1) % 3
+            new_day = (session.current_day + 1) % total
             sr.update_session(session.id, completed_days=new_completed, current_day=new_day)
-            week_complete = new_completed >= 3
+            week_complete = new_completed >= total
             needs_weighin = body_weight_repo.needs_weigh_in(user_id)
             return {
                 "completed": True,

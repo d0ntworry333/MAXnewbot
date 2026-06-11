@@ -13,10 +13,30 @@ GOAL_MULTIPLIERS_INTRO = {
 
 # Основной этап (недели 3+): фиксированная «Средняя» активность 1.375 × множитель цели.
 MAIN_STAGE_ACTIVITY = 1.375
-GOAL_MULTIPLIERS_MAIN = {
+GOAL_MULTIPLIERS_MAIN_W34 = {
     "дефицит": {"Мужской": 0.9, "Женский": 0.95},
     "профицит": {"Мужской": 1.25, "Женский": 1.15},
 }
+GOAL_MULTIPLIERS_MAIN_W56 = {
+    "дефицит": {"Мужской": 0.9, "Женский": 0.95},
+    "профицит": {"Мужской": 1.1, "Женский": 1.05},
+}
+GOAL_MULTIPLIERS_MAIN_W7_DEFICIT = {
+    "Мужской": 0.85,
+    "Женский": 0.9,
+}
+
+# Разгрузочная неделя 8: корректировка углеводов (ккал).
+DELOAD_DEFICIT_CARB_KCAL = 350   # +75–100 г углеводов
+DELOAD_SURPLUS_CARB_KCAL = 250   # −50–75 г углеводов от поддержки
+
+
+def _main_stage_goal_multiplier(goal: str, gender: str, week: int) -> float:
+    if week >= 7 and goal == "дефицит":
+        return GOAL_MULTIPLIERS_MAIN_W7_DEFICIT.get(gender, 0.9)
+    if week >= 5:
+        return GOAL_MULTIPLIERS_MAIN_W56.get(goal, {}).get(gender, 1.0)
+    return GOAL_MULTIPLIERS_MAIN_W34.get(goal, {}).get(gender, 1.0)
 
 
 def _mifflin_base(weight: float, height: float, age: int, gender: str) -> float:
@@ -36,9 +56,15 @@ def calculate_bmr(
 ) -> float:
     """Суточная норма калорий по формуле Миффлина — Сан Жеора."""
     base = _mifflin_base(weight, height, age, gender)
+    if week == 8 and goal:
+        maintenance = base * MAIN_STAGE_ACTIVITY
+        if goal == "дефицит":
+            w7 = maintenance * GOAL_MULTIPLIERS_MAIN_W7_DEFICIT.get(gender, 0.9)
+            return round(w7 + DELOAD_DEFICIT_CARB_KCAL, 2)
+        return round(maintenance - DELOAD_SURPLUS_CARB_KCAL, 2)
     if week >= 3 and goal:
         tdee = base * MAIN_STAGE_ACTIVITY
-        goal_mult = GOAL_MULTIPLIERS_MAIN.get(goal, {}).get(gender, 1.0)
+        goal_mult = _main_stage_goal_multiplier(goal, gender, week)
         return round(tdee * goal_mult, 2)
     multiplier = ACTIVITY_MULTIPLIERS.get(activity_level, 1.2)
     tdee = base * multiplier

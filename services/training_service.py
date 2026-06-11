@@ -8,6 +8,7 @@ from content.exercises import (
     filter_exercises_by_pain,
     format_exercise_list,
     week_has_training_plan,
+    trainings_per_week,
 )
 from content.texts import TEXT_EXERCISES_WEEK_STUB
 from content.weeks import clamp_week
@@ -36,21 +37,23 @@ def create_session(user_id: int, training_days: str) -> int:
 
 def get_training_status(session: TrainingSession, gender: str | None = None) -> str:
     day_label = get_training_day_label(session.week_number, session.current_day, gender)
+    total = trainings_per_week(session.week_number)
     return (
         f"📊 Статус тренировок:\n\n"
         f"📅 Неделя: {session.week_number}\n"
         f"🗓 Дни тренировок: {session.training_days}\n"
-        f"✅ Выполнено: {session.completed_days}/3\n"
+        f"✅ Выполнено: {session.completed_days}/{total}\n"
         f"📌 Текущий день: {day_label}"
     )
 
 
 def get_schedule_text(session: TrainingSession, gender: str | None = None) -> str:
+    total = trainings_per_week(session.week_number)
     lines = [
         f"📅 Расписание — Неделя {session.week_number}",
         f"🗓 Дни: {session.training_days}\n",
     ]
-    for day_idx in range(3):
+    for day_idx in range(total):
         status = "✅" if day_idx < session.completed_days else ("⏳" if day_idx == session.completed_days else "⭕")
         day_name = get_training_day_label(session.week_number, day_idx, gender)
         lines.append(f"{status} {day_name}")
@@ -107,8 +110,9 @@ def complete_training(
             weights=collected_weights,
         )
 
+    total_days = trainings_per_week(session.week_number)
     new_completed = session.completed_days + 1
-    new_day = (session.current_day + 1) % 3
+    new_day = (session.current_day + 1) % total_days
 
     session_repo.update_session(
         session.id,
@@ -116,11 +120,13 @@ def complete_training(
         current_day=new_day,
     )
 
-    week_complete = new_completed >= 3
+    week_complete = new_completed >= total_days
     needs_weighin = body_weight_repo.needs_weigh_in(user_id)
 
-    logger.info("User %d completed training day %d, total=%d/3, week_complete=%s",
-                user_id, session.current_day, new_completed, week_complete)
+    logger.info(
+        "User %d completed training day %d, total=%d/%d, week_complete=%s",
+        user_id, session.current_day, new_completed, total_days, week_complete,
+    )
 
     return {
         "week_complete": week_complete,
