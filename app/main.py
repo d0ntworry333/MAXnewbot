@@ -1,5 +1,5 @@
 """
-Application entry point for the MAX Fitness Bot.
+Application entry point for the MAX bot «Твой тренер».
 Initializes all components and starts long polling.
 """
 
@@ -47,7 +47,7 @@ async def main() -> None:
     setup_logging()
     logger = logging.getLogger(__name__)
 
-    logger.info("Starting MAX Fitness Bot...")
+    logger.info("Starting MAX bot «Твой тренер»...")
     logger.info("Database: %s", settings.database_path)
     logger.info("Timezone: %s", settings.timezone)
 

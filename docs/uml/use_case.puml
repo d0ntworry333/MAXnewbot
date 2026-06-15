@@ -1,0 +1,128 @@
+@startuml use_case_maxbot
+' Use Case — нотация UML 2.x
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam actorStyle awesome
+skinparam ArrowThickness 1
+left to right direction
+
+title Диаграмма вариантов использования\nМАКС-бот «Твой тренер»
+
+legend right
+  |= Тип связи |= Графическое обозначение |
+  | Ассоциация (актор ↔ вариант) | ——— сплошная, без стрелки |
+  | Зависимость <<use>> | - - - → пунктир, открытая стрелка |
+  | Include | - - - → <<include>> (к обязательному ВИ) |
+  | Extend | - - - → <<extend>> (к базовому ВИ) |
+  | Обобщение | ———▷ треугольник на родителе |
+endlegend
+
+actor "Пользователь\n(12–45 лет)" as User
+actor "Планировщик\n(APScheduler)" as Scheduler
+
+rectangle "Система: МАКС-бот «Твой тренер»" {
+
+  package "Вход" {
+    usecase "Запустить бота" as UC_Start
+    usecase "Навигация по меню" as UC_Nav
+  }
+
+  package "Анкета" {
+    usecase "Полная анкета" as UC_FormFull
+    usecase "Краткая анкета" as UC_FormShort
+    usecase "Просмотр профиля" as UC_ShowMe
+    usecase "История анкет" as UC_MyForms
+    usecase "Удаление анкет" as UC_ClearForms
+    usecase "Отмена анкеты" as UC_Cancel
+  }
+
+  package "Рекомендации" {
+    usecase "Goal & Diet" as UC_Diet
+    usecase "Recovery" as UC_Recovery
+  }
+
+  package "Тренировки" {
+    usecase "Создать сессию" as UC_Session
+    usecase "Статус / расписание" as UC_Status
+    usecase "Упражнения дня" as UC_DayEx
+    usecase "Самочувствие" as UC_Health
+    usecase "Техника упражнения" as UC_Tech
+    usecase "Ввод рабочих весов" as UC_Weights
+    usecase "Завершить тренировку" as UC_Complete
+    usecase "Смена недели" as UC_WeekNav
+  }
+
+  package "Контроль" {
+    usecase "Недельная проверка" as UC_WeekCheck
+    usecase "Вечерняя проверка" as UC_Evening
+    usecase "Напоминание" as UC_Remind
+    usecase "Вес тела" as UC_BodyWeight
+  }
+
+  package "Планируется" <<future>> {
+    usecase "Достижения" as UC_Achieve
+    usecase "Видео-техника" as UC_Video
+    usecase "Чекпоинты 8 нед." as UC_Checkpoints
+  }
+}
+
+' —— Ассоциации: сплошная линия БЕЗ стрелки (коммуникация актор–система) ——
+User -- UC_Start
+User -- UC_Nav
+User -- UC_FormFull
+User -- UC_FormShort
+User -- UC_ShowMe
+User -- UC_MyForms
+User -- UC_ClearForms
+User -- UC_Cancel
+User -- UC_Diet
+User -- UC_Recovery
+User -- UC_Session
+User -- UC_Status
+User -- UC_DayEx
+User -- UC_Tech
+User -- UC_Complete
+User -- UC_WeekNav
+User -- UC_WeekCheck
+User -- UC_BodyWeight
+
+' Планировщик — вторичный актор (инициирует, не пользователь)
+Scheduler -- UC_Evening
+Scheduler -- UC_Remind
+
+' —— Include: пунктир + стрелка К включаемому варианию (обязательный подсценарий) ——
+UC_DayEx ..> UC_Health : <<include>>
+UC_FormFull ..> UC_Diet : <<include>>
+
+' —— Extend: пунктир + стрелка К базовому варианту (опциональное расширение) ——
+UC_Complete <.. UC_WeekCheck : <<extend>>
+UC_DayEx <.. UC_Weights : <<extend>>
+UC_DayEx <.. UC_BodyWeight : <<extend>>
+UC_FormFull <.. UC_Recovery : <<extend>>
+
+' —— Зависимость (планируемые функции) ——
+User ..> UC_Achieve : <<planned>>
+User ..> UC_Video : <<planned>>
+
+' —— Внешние системы: зависимость <<use>> от вариантов, использующих API/БД ——
+actor "API МАКС" as MAXAPI
+database "SQLite" as DB
+
+UC_Start ..> MAXAPI : <<use>>
+UC_Nav ..> MAXAPI : <<use>>
+UC_FormFull ..> DB : <<use>>
+UC_DayEx ..> DB : <<use>>
+UC_Complete ..> DB : <<use>>
+UC_Evening ..> MAXAPI : <<use>>
+
+note bottom of UC_Health
+  **include:** самочувствие обязательно
+  перед выдачей упражнений
+end note
+
+note bottom of UC_WeekCheck
+  **extend:** проверка недели только
+  после 3 выполненных дней
+end note
+
+@enduml

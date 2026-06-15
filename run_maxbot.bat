@@ -3,7 +3,7 @@ setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
 echo.
-echo ===== MAX Fitness Bot =====
+echo ===== МАКС-бот «Твой тренер» =====
 echo.
 
 if not exist ".env" (
@@ -38,6 +38,18 @@ if defined EXIST_PID (
 
 echo Starting bot... Close this window or press Ctrl+C to stop.
 echo.
+
+%LAUNCHER% -c "import maxapi" >nul 2>&1
+if errorlevel 1 (
+    echo [SETUP] Python package "maxapi" was not found.
+    echo [SETUP] Installing dependencies from requirements.txt...
+    %LAUNCHER% -m pip install -r requirements.txt
+    if errorlevel 1 (
+        echo [ERROR] Failed to install dependencies.
+        pause
+        exit /b 1
+    )
+)
 
 %LAUNCHER% app\main.py
 set "EXITCODE=%ERRORLEVEL%"

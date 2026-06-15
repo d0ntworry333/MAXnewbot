@@ -25,6 +25,10 @@ GOAL_MULTIPLIERS_MAIN_W7_DEFICIT = {
     "Мужской": 0.85,
     "Женский": 0.9,
 }
+GOAL_MULTIPLIERS_MAIN_W7_SURPLUS = {
+    "Мужской": 1.2,
+    "Женский": 1.1,
+}
 
 # Разгрузочная неделя 8: корректировка углеводов (ккал).
 DELOAD_DEFICIT_CARB_KCAL = 350   # +75–100 г углеводов
@@ -34,6 +38,8 @@ DELOAD_SURPLUS_CARB_KCAL = 250   # −50–75 г углеводов от под�
 def _main_stage_goal_multiplier(goal: str, gender: str, week: int) -> float:
     if week >= 7 and goal == "дефицит":
         return GOAL_MULTIPLIERS_MAIN_W7_DEFICIT.get(gender, 0.9)
+    if week >= 7 and goal == "профицит":
+        return GOAL_MULTIPLIERS_MAIN_W7_SURPLUS.get(gender, 1.1)
     if week >= 5:
         return GOAL_MULTIPLIERS_MAIN_W56.get(goal, {}).get(gender, 1.0)
     return GOAL_MULTIPLIERS_MAIN_W34.get(goal, {}).get(gender, 1.0)

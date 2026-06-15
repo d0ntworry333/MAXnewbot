@@ -1,0 +1,110 @@
+@startuml state_chart_maxbot
+' State Machine Diagram — нотация UML 2.x
+skinparam shadowing false
+skinparam state {
+  BackgroundColor #F8F8F8
+  BorderColor #333333
+}
+skinparam ArrowThickness 1
+
+title Диаграмма состояний (State Chart)\nМАКС-бот «Твой тренер»
+
+legend right
+  |= Элемент |= Обозначение |
+  | Начальное псевдосостояние | ● (чёрный круг) |
+  | Конечное псевдосостояние | ◎ (круг в круге) |
+  | Переход | ———▷ сплошная + открытая стрелка |
+  | Составное состояние | рамка с вложенными состояниями |
+  | Внешнее событие | метка на переходе [событие] |
+endlegend
+
+' ══════════ Навигация (FSM = null) ══════════
+state "Навигация" as NavRegion {
+  state "ГлавноеМеню" as Menu
+  state "ОсновноеМеню" as Main
+  state "МенюАнкеты" as AnketaMenu
+  state "ХабТренировок" as TrainHub
+  state "АктивнаяТренировка" as TrainActive
+
+  [*] --> Menu : /start\n[bot_started]
+
+  Menu --> Main : nav:main\n/ [callback]
+  Main --> Menu : nav:menu
+  Main --> AnketaMenu : nav:anketa
+  Main --> TrainHub : nav:training
+  AnketaMenu --> Main : nav:main
+  TrainHub --> TrainActive : [сессия создана]
+  TrainActive --> TrainHub : nav:training
+}
+
+' ══════════ Анкета — полная (composite) ══════════
+state "АнкетаПолная\n(FormStates)" as FormFull {
+  state "height" as Height
+  state "weight" as Weight
+  state "activity" as Activity
+  state "gender" as Gender
+  state "age" as Age
+  state "goal" as Goal
+  state "saved" as Saved
+
+  [*] --> Height : /form
+  Height --> Weight : [ввод роста]\n/ valid
+  Weight --> Activity : [ввод веса]
+  Activity --> Gender : [form:activity:*]
+  Gender --> Age : [form:gender:*]
+  Age --> Goal : [ввод возраста]
+  Goal --> Saved : [form:goal:*]
+  Saved --> [*] : [запись users]\n/ BMR, ИМТ
+}
+
+' ══════════ Анкета — краткая ══════════
+state "АнкетаКраткая" as FormShort {
+  state "short_weight" as SW
+  state "short_activity" as SA
+  state "saved2" as S2
+
+  [*] --> SW
+  SW --> SA : [ввод веса]
+  SA --> S2 : [form:activity:*]
+  S2 --> [*]
+}
+
+AnketaMenu --> FormFull : /form\n[нет профиля]
+AnketaMenu --> FormShort : /form\n[есть профиль]
+FormFull --> Main : [анкета завершена]
+FormShort --> Main : [анкета завершена]
+
+' ══════════ Сбор данных тренировки ══════════
+state "TrainingStates" as TrainData {
+  state "collecting_exercise_weight" as ExW
+  state "collecting_body_weight" as BodyW
+  state "collecting_calories" as CalW
+
+  [*] --> ExW
+  ExW --> ExW : [след. упражнение]\n/ очередь не пуста
+  ExW --> [*] : [очередь пуста]
+  BodyW --> [*] : [вес записан]
+  CalW --> [*] : [калории введены]
+}
+
+TrainActive --> ExW : training:day_exercises\n[health выбран]
+ExW --> TrainActive : [возврат в меню]
+
+TrainActive --> BodyW : [week_complete]\n/ needs_weigh_in
+BodyW --> TrainActive
+
+TrainActive --> CalW : [check01|check02]\n/ ветка калорий
+CalW --> TrainActive
+
+' ══════════ Ожидание вечерней проверки ══════════
+state "ОжиданиеПроверки" as Pending {
+  state "log_pending" as LogPending
+  [*] --> LogPending : [cron 23:00]\n/ APScheduler
+  LogPending --> [*] : sched:yes|no
+}
+
+Pending --> TrainActive : [ответ получен]
+
+FormFull --> AnketaMenu : /cancel\n[прерывание FSM]
+
+@enduml

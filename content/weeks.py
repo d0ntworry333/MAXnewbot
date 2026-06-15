@@ -13,11 +13,8 @@ DELOAD_WEEK = frozenset({8})
 
 
 def week_has_full_content_for_goal(goal: str, week: int) -> bool:
-    """Есть ли методичка для цели и недели (профицит нед. 7 пока без контента)."""
-    w = clamp_week(week)
-    if w == 7 and goal == "профицит":
-        return False
-    return w in WEEKS_WITH_FULL_CONTENT
+    """Есть ли методичка для цели и недели."""
+    return clamp_week(week) in WEEKS_WITH_FULL_CONTENT
 
 
 def clamp_week(week: int | None) -> int:

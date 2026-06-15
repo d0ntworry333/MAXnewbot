@@ -1,0 +1,61 @@
+@startuml notation_legend
+skinparam shadowing false
+title Легенда UML-обозначений\nМАКС-бот «Твой тренер»
+
+together {
+  package "1. Ассоциация (сплошная, без стрелки)" {
+    actor A1
+    usecase "ВИ" as U1
+    A1 -- U1
+  }
+}
+
+together {
+  package "2. Зависимость (пунктир →)" {
+    component C1
+    component C2
+    C1 ..> C2 : <<use>>
+  }
+}
+
+together {
+  package "3. Include (пунктир →)" {
+    usecase "База" as B3
+    usecase "Вкл." as I3
+    B3 ..> I3 : <<include>>
+  }
+}
+
+together {
+  package "4. Extend (пунктир → к базе)" {
+    usecase "База" as B4
+    usecase "Расш." as E4
+    B4 <.. E4 : <<extend>>
+  }
+}
+
+together {
+  package "5. Реализация (пунктир ▷)" {
+    component C5
+    interface I5
+    C5 ..|> I5
+  }
+}
+
+together {
+  package "6. Обобщение (сплошная ▷)" {
+    component Child
+    component Parent
+    Child --|> Parent
+  }
+}
+
+together {
+  package "7. Композиция (◆)" {
+    component Whole
+    component Part
+    Whole *-- Part
+  }
+}
+
+@enduml

@@ -18,10 +18,10 @@ from handlers.training import (
 )
 from handlers.training_check import handle_check_callback, handle_scheduled_callback
 from handlers.show import handle_show_callback
+from handlers.achievements import show_achievements_menu, handle_achievements_callback
 
 from services import user_service, training_service
 from content.texts import (
-    TEXT_ACHIEVEMENTS_STUB,
     TEXT_NO_ACTIVE_SESSION,
     TEXT_NO_FORMS,
     get_nutrition_text,
@@ -71,6 +71,8 @@ def register(dp: Dispatcher) -> None:
                 await handle_check_callback(event, payload, user_id, bot, context)
             elif payload.startswith("sched:"):
                 await handle_scheduled_callback(event, payload, user_id, bot, context)
+            elif payload.startswith("achieve:"):
+                await handle_achievements_callback(payload, user_id, bot)
             else:
                 logger.warning("Unknown callback payload: %s", payload)
         except Exception:
@@ -149,8 +151,7 @@ async def _handle_nav(event, payload: str, user_id: int, bot, context: MemoryCon
         await _show_training_workspace(user_id, bot)
 
     elif dest == "achievements":
-        kb = build_menu_keyboard()
-        await send_with_keyboard(bot, user_id, TEXT_ACHIEVEMENTS_STUB, kb)
+        await show_achievements_menu(user_id, bot)
 
 
 async def _show_training_workspace(user_id: int, bot) -> None:

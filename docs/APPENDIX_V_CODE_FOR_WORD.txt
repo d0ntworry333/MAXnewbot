@@ -1,0 +1,1822 @@
+ПРИЛОЖЕНИЕ В
+Фрагменты программного кода МАКС-бота «Твой тренер»
+Язык: Python 3.10+. Репозиторий: MAXBOT.
+========================================================================
+
+В.1. Точка входа — app/main.py
+------------------------------------------------------------------------
+# Файл: app/main.py
+
+"""
+Application entry point for the MAX bot «Твой тренер».
+Initializes all components and starts long polling.
+"""
+
+import asyncio
+import logging
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from config.settings import settings
+from repositories.database import init_db, set_db_path
+from transport.max.helpers import set_max_message_length
+from scheduler.jobs import create_scheduler, set_bot
+from maxapi import Bot, Dispatcher
+
+
+def setup_logging() -> None:
+    level = getattr(logging, settings.log_level.upper(), logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s | %(name)s | %(levelname)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    logging.getLogger("aiohttp").setLevel(logging.WARNING)
+    logging.getLogger("apscheduler").setLevel(logging.INFO)
+
+
+def register_handlers(dp: Dispatcher) -> None:
+    from handlers import start, form, training, training_check, show, navigation
+
+    start.register(dp)
+    form.register(dp)
+    training.register(dp)
+    training_check.register(dp)
+    show.register(dp)
+    navigation.register(dp)
+
+
+async def main() -> None:
+    setup_logging()
+    logger = logging.getLogger(__name__)
+
+    logger.info("Starting MAX bot «Твой тренер»...")
+    logger.info("Database: %s", settings.database_path)
+    logger.info("Timezone: %s", settings.timezone)
+
+    set_db_path(settings.database_path)
+    init_db()
+
+    set_max_message_length(settings.max_message_length)
+
+    bot = Bot(settings.max_bot_token)
+    dp = Dispatcher()
+
+    register_handlers(dp)
+
+    set_bot(bot)
+    scheduler = create_scheduler(
+        tz_name=settings.timezone,
+        evening_hour=settings.check_hour_evening,
+        evening_minute=settings.check_minute_evening,
+        reminder_hour=settings.reminder_hour,
+        reminder_minute=settings.reminder_minute,
+        reset_hour=settings.reset_hour,
+        reset_minute=settings.reset_minute,
+    )
+    scheduler.start()
+    logger.info("Scheduler started with %d jobs", len(scheduler.get_jobs()))
+
+    logger.info("Starting polling...")
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+
+В.2. Модели данных — core/models.py
+------------------------------------------------------------------------
+# Файл: core/models.py
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Optional
+
+
+@dataclass
+class UserProfile:
+    id: int
+    user_id: int
+    username: str
+    height: float
+    weight: float
+    activity_level: str
+    gender: str
+    age: int
+    bmr: float
+    goal: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass
+class TrainingSession:
+    id: int
+    user_id: int
+    week_number: int
+    training_days: str
+    current_day: int
+    completed_days: int
+    session_active: bool
+    check01_passed: bool
+    check02_passed: bool
+    check03_passed: bool
+    check04_passed: bool
+    check05_passed: bool
+    created_at: str
+    updated_at: str
+
+
+@dataclass
+class TrainingLog:
+    id: int
+    user_id: int
+    session_id: int
+    training_date: str
+    training_type: str
+    completed: Optional[bool]
+    pain_feedback: Optional[str]
+    created_at: str
+
+
+@dataclass
+class ExerciseWeight:
+    id: int
+    user_id: int
+    session_id: int
+    training_date: str
+    exercise_id: int
+    exercise_name: str
+    weight: float
+    week_number: int
+    day_number: int
+    created_at: str
+
+
+@dataclass
+class BodyWeight:
+    id: int
+    user_id: int
+    weight: float
+    recorded_at: str
+    created_at: str
+
+
+@dataclass
+class Exercise:
+    id: int
+    name: str
+    description: str
+    muscle_groups: list[str]
+    technique: str
+
+
+В.3. Расчёт BMR и ИМТ — core/calculations.py
+------------------------------------------------------------------------
+# Файл: core/calculations.py
+
+ACTIVITY_MULTIPLIERS = {
+    "Очень высокая": 1.725,
+    "Высокая": 1.55,
+    "Средняя": 1.375,
+    "Низкая": 1.2,
+}
+
+# Вводный этап (недели 1–2): активность из анкеты × множитель цели.
+GOAL_MULTIPLIERS_INTRO = {
+    "дефицит": {"Мужской": 0.95, "Женский": 0.95},
+    "профицит": {"Мужской": 1.15, "Женский": 1.1},
+}
+
+# Основной этап (недели 3+): фиксированная «Средняя» активность 1.375 × множитель цели.
+MAIN_STAGE_ACTIVITY = 1.375
+GOAL_MULTIPLIERS_MAIN_W34 = {
+    "дефицит": {"Мужской": 0.9, "Женский": 0.95},
+    "профицит": {"Мужской": 1.25, "Женский": 1.15},
+}
+GOAL_MULTIPLIERS_MAIN_W56 = {
+    "дефицит": {"Мужской": 0.9, "Женский": 0.95},
+    "профицит": {"Мужской": 1.1, "Женский": 1.05},
+}
+GOAL_MULTIPLIERS_MAIN_W7_DEFICIT = {
+    "Мужской": 0.85,
+    "Женский": 0.9,
+}
+GOAL_MULTIPLIERS_MAIN_W7_SURPLUS = {
+    "Мужской": 1.2,
+    "Женский": 1.1,
+}
+
+# Разгрузочная неделя 8: корректировка углеводов (ккал).
+DELOAD_DEFICIT_CARB_KCAL = 350   # +75–100 г углеводов
+DELOAD_SURPLUS_CARB_KCAL = 250   # −50–75 г углеводов от поддержки
+
+
+def _main_stage_goal_multiplier(goal: str, gender: str, week: int) -> float:
+    if week >= 7 and goal == "дефицит":
+        return GOAL_MULTIPLIERS_MAIN_W7_DEFICIT.get(gender, 0.9)
+    if week >= 7 and goal == "профицит":
+        return GOAL_MULTIPLIERS_MAIN_W7_SURPLUS.get(gender, 1.1)
+    if week >= 5:
+        return GOAL_MULTIPLIERS_MAIN_W56.get(goal, {}).get(gender, 1.0)
+    return GOAL_MULTIPLIERS_MAIN_W34.get(goal, {}).get(gender, 1.0)
+
+
+def _mifflin_base(weight: float, height: float, age: int, gender: str) -> float:
+    if gender == "Мужской":
+        return (10 * weight) + (6.25 * height) - (5 * age) + 5
+    return (10 * weight) + (6.25 * height) - (5 * age) - 161
+
+
+def calculate_bmr(
+    weight: float,
+    height: float,
+    age: int,
+    gender: str,
+    activity_level: str,
+    goal: str | None = None,
+    week: int = 1,
+) -> float:
+    """Суточная норма калорий по формуле Миффлина — Сан Жеора."""
+    base = _mifflin_base(weight, height, age, gender)
+    if week == 8 and goal:
+        maintenance = base * MAIN_STAGE_ACTIVITY
+        if goal == "дефицит":
+            w7 = maintenance * GOAL_MULTIPLIERS_MAIN_W7_DEFICIT.get(gender, 0.9)
+            return round(w7 + DELOAD_DEFICIT_CARB_KCAL, 2)
+        return round(maintenance - DELOAD_SURPLUS_CARB_KCAL, 2)
+    if week >= 3 and goal:
+        tdee = base * MAIN_STAGE_ACTIVITY
+        goal_mult = _main_stage_goal_multiplier(goal, gender, week)
+        return round(tdee * goal_mult, 2)
+    multiplier = ACTIVITY_MULTIPLIERS.get(activity_level, 1.2)
+    tdee = base * multiplier
+    if goal:
+        goal_mult = GOAL_MULTIPLIERS_INTRO.get(goal, {}).get(gender, 1.0)
+        tdee *= goal_mult
+    return round(tdee, 2)
+
+
+def calculate_bmi(weight: float, height: float) -> float:
+    """BMI = weight_kg / (height_m)^2"""
+    height_m = height / 100
+    if height_m <= 0:
+        return 0.0
+    return round(weight / (height_m ** 2), 1)
+
+
+В.4. Валидация анкеты — core/validators.py
+------------------------------------------------------------------------
+# Файл: core/validators.py
+
+def parse_height(text: str) -> float | None:
+    """Parse height in cm. Valid: 50-250."""
+    try:
+        value = float(text.replace(",", ".").strip())
+        if 50 <= value <= 250:
+            return value
+    except (ValueError, AttributeError):
+        pass
+    return None
+
+
+def parse_weight(text: str) -> float | None:
+    """Parse weight in kg. Valid: 20-300."""
+    try:
+        value = float(text.replace(",", ".").strip())
+        if 20 <= value <= 300:
+            return value
+    except (ValueError, AttributeError):
+        pass
+    return None
+
+
+def parse_age(text: str) -> int | None:
+    """Parse age. Valid: 1-120."""
+    try:
+        value = int(text.strip())
+        if 1 <= value <= 120:
+            return value
+    except (ValueError, AttributeError):
+        pass
+    return None
+
+
+def parse_exercise_weight(text: str) -> float | None:
+    """Parse exercise weight in kg. Valid: >= 0."""
+    try:
+        value = float(text.replace(",", ".").strip())
+        if value >= 0:
+            return value
+    except (ValueError, AttributeError):
+        pass
+    return None
+
+
+def parse_body_weight(text: str) -> float | None:
+    """Parse body weight. Valid: 20-300."""
+    return parse_weight(text)
+
+
+VALID_ACTIVITIES = {"Очень высокая", "Высокая", "Средняя", "Низкая"}
+
+
+def validate_activity(text: str) -> str | None:
+    text = text.strip()
+    if text in VALID_ACTIVITIES:
+        return text
+    return None
+
+
+GENDER_MAP = {"мужской": "Мужской", "женский": "Женский"}
+
+
+def normalize_gender(text: str) -> str | None:
+    return GENDER_MAP.get(text.strip().lower())
+
+
+GOAL_MAP = {
+    "снизить вес (дефицит)": "дефицит",
+    "набрать вес (профицит)": "профицит",
+}
+
+
+def normalize_goal(text: str) -> str | None:
+    return GOAL_MAP.get(text.strip().lower())
+
+
+В.5. Схема базы данных — repositories/database.py
+------------------------------------------------------------------------
+# Файл: repositories/database.py
+
+import sqlite3
+import os
+import logging
+
+logger = logging.getLogger(__name__)
+
+_db_path: str = "data/bot.db"
+
+
+def set_db_path(path: str) -> None:
+    global _db_path
+    _db_path = path
+
+
+def get_connection() -> sqlite3.Connection:
+    os.makedirs(os.path.dirname(_db_path) or ".", exist_ok=True)
+    conn = sqlite3.connect(_db_path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    return conn
+
+
+def init_db() -> None:
+    conn = get_connection()
+    try:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                username TEXT,
+                height REAL,
+                weight REAL,
+                activity_level TEXT,
+                gender TEXT,
+                age INTEGER,
+                bmr REAL,
+                goal TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_user_id ON users(user_id);
+
+            CREATE TABLE IF NOT EXISTS training_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                week_number INTEGER DEFAULT 1,
+                training_days TEXT,
+                current_day INTEGER DEFAULT 0,
+                completed_days INTEGER DEFAULT 0,
+                session_active BOOLEAN DEFAULT 1,
+                check01_passed BOOLEAN DEFAULT 0,
+                check02_passed BOOLEAN DEFAULT 0,
+                check03_passed BOOLEAN DEFAULT 0,
+                check04_passed BOOLEAN DEFAULT 0,
+                check05_passed BOOLEAN DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_training_user_id ON training_sessions(user_id);
+
+            CREATE TABLE IF NOT EXISTS training_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                session_id INTEGER,
+                training_date DATE,
+                training_type TEXT,
+                completed BOOLEAN,
+                pain_feedback TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_training_log_user_id ON training_log(user_id);
+
+            CREATE TABLE IF NOT EXISTS exercise_weights (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                session_id INTEGER,
+                training_date DATE,
+                exercise_id INTEGER,
+                exercise_name TEXT,
+                weight REAL,
+                week_number INTEGER,
+                day_number INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_exercise_weights_user ON exercise_weights(user_id);
+
+            CREATE TABLE IF NOT EXISTS weight_progress (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                weight REAL,
+                recorded_at DATE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_weight_progress_user ON weight_progress(user_id);
+        """)
+        _migrate_training_sessions(conn)
+        conn.commit()
+        logger.info("Database initialized at %s", _db_path)
+    finally:
+        conn.close()
+
+
+def _migrate_training_sessions(conn: sqlite3.Connection) -> None:
+    """Добавить колонки чеков 3–5 в существующие БД."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(training_sessions)")}
+    for col in ("check03_passed", "check04_passed", "check05_passed"):
+        if col not in cols:
+            conn.execute(
+                f"ALTER TABLE training_sessions ADD COLUMN {col} BOOLEAN DEFAULT 0"
+            )
+
+
+В.6. Профиль пользователя — services/user_service.py
+------------------------------------------------------------------------
+# Файл: services/user_service.py
+
+import logging
+from typing import Optional
+from core.models import UserProfile
+from core.calculations import calculate_bmr, calculate_bmi
+from repositories import user_repo
+
+logger = logging.getLogger(__name__)
+
+
+def create_full_profile(user_id: int, username: str, height: float, weight: float,
+                        activity_level: str, gender: str, age: int, goal: str) -> float:
+    """Create a full user profile. Returns calculated BMR."""
+    bmr = calculate_bmr(weight, height, age, gender, activity_level, goal)
+    user_repo.add_user(user_id, username, height, weight, activity_level, gender, age, bmr, goal)
+    logger.info("Created full profile for user %d, BMR=%.2f", user_id, bmr)
+    return bmr
+
+
+def create_short_profile(user_id: int, username: str, weight: float, activity_level: str) -> Optional[float]:
+    """Create a short profile update using first profile's inherited fields. Returns BMR or None if no first profile."""
+    first = user_repo.get_first_profile(user_id)
+    if not first:
+        return None
+    bmr = calculate_bmr(weight, first.height, first.age, first.gender, activity_level, first.goal)
+    user_repo.add_user(user_id, username, first.height, weight, activity_level,
+                       first.gender, first.age, bmr, first.goal)
+    logger.info("Created short profile for user %d, BMR=%.2f", user_id, bmr)
+    return bmr
+
+
+def get_target_calories(profile: UserProfile, week: int = 1) -> float:
+    """Суточная норма калорий с учётом цели, активности и номера недели цикла."""
+    return calculate_bmr(
+        profile.weight,
+        profile.height,
+        profile.age,
+        profile.gender,
+        profile.activity_level,
+        profile.goal,
+        week=week,
+    )
+
+
+def get_latest_profile(user_id: int) -> Optional[UserProfile]:
+    return user_repo.get_latest_profile(user_id)
+
+
+def get_first_profile(user_id: int) -> Optional[UserProfile]:
+    return user_repo.get_first_profile(user_id)
+
+
+def get_all_profiles(user_id: int) -> list[UserProfile]:
+    return user_repo.get_all_profiles(user_id)
+
+
+def has_forms(user_id: int) -> bool:
+    return user_repo.has_user_forms(user_id)
+
+
+def delete_latest(user_id: int) -> bool:
+    return user_repo.delete_latest_profile(user_id)
+
+
+def delete_all(user_id: int) -> int:
+    return user_repo.delete_all_profiles(user_id)
+
+
+def format_profile(profile: UserProfile) -> str:
+    bmi = calculate_bmi(profile.weight, profile.height)
+    return (
+        f"📊 Ваш профиль:\n\n"
+        f"📏 Рост: {profile.height} см\n"
+        f"⚖️ Вес: {profile.weight} кг\n"
+        f"📐 ИМТ: {bmi}\n"
+        f"🏃 Активность: {profile.activity_level}\n"
+        f"👤 Пол: {profile.gender}\n"
+        f"🎂 Возраст: {profile.age}\n"
+        f"🔥 Калории (БМР): {profile.bmr} ккал\n"
+        f"🎯 Цель: {profile.goal}\n"
+        f"📅 Дата заполнения: {profile.created_at}"
+    )
+
+
+def format_all_profiles(profiles: list[UserProfile]) -> str:
+    if not profiles:
+        return "У вас нет заполненных анкет."
+
+    lines = []
+    for i, p in enumerate(profiles):
+        if i == 0:
+            lines.append(
+                f"📋 Анкета #{i+1}:\n"
+                f"  📏 Рост: {p.height} см\n"
+                f"  ⚖️ Вес: {p.weight} кг\n"
+                f"  🏃 Активность: {p.activity_level}\n"
+                f"  👤 Пол: {p.gender}\n"
+                f"  🎂 Возраст: {p.age}\n"
+                f"  🎯 Цель: {p.goal}\n"
+                f"  🔥 БМР: {p.bmr} ккал\n"
+                f"  📅 Дата: {p.created_at}"
+            )
+        else:
+            prev = profiles[i - 1]
+            changes = []
+            if p.weight != prev.weight:
+                diff = p.weight - prev.weight
+                sign = "+" if diff > 0 else ""
+                changes.append(f"  ⚖️ Вес: {p.weight} кг ({sign}{diff:.1f})")
+            if p.activity_level != prev.activity_level:
+                changes.append(f"  🏃 Активность: {p.activity_level}")
+            if p.bmr != prev.bmr:
+                changes.append(f"  🔥 БМР: {p.bmr} ккал")
+            if not changes:
+                changes.append("  Без изменений")
+            lines.append(
+                f"\n📋 Анкета #{i+1} ({p.created_at}):\n" + "\n".join(changes)
+            )
+
+    return "\n".join(lines)
+
+
+В.7. Тренировочный сервис — services/training_service.py
+------------------------------------------------------------------------
+# Файл: services/training_service.py
+
+import logging
+from datetime import date
+from typing import Optional
+from core.models import TrainingSession
+from content.exercises import (
+    get_exercises_for_day,
+    get_training_day_label,
+    filter_exercises_by_pain,
+    format_exercise_list,
+    week_has_training_plan,
+    trainings_per_week,
+)
+from content.texts import TEXT_EXERCISES_WEEK_STUB
+from content.weeks import clamp_week
+from repositories import session_repo, training_log_repo, exercise_weight_repo, body_weight_repo
+
+logger = logging.getLogger(__name__)
+
+
+def get_active_session(user_id: int) -> Optional[TrainingSession]:
+    return session_repo.get_active_session(user_id)
+
+
+def resolve_user_week(user_id: int) -> int:
+    """Текущая неделя цикла: из активной сессии или 1 по умолчанию."""
+    session = session_repo.get_active_session(user_id)
+    if session:
+        return clamp_week(session.week_number)
+    return 1
+
+
+def create_session(user_id: int, training_days: str) -> int:
+    session_id = session_repo.create_session(user_id, training_days)
+    logger.info("Created training session %d for user %d, days=%s", session_id, user_id, training_days)
+    return session_id
+
+
+def get_training_status(session: TrainingSession, gender: str | None = None) -> str:
+    day_label = get_training_day_label(session.week_number, session.current_day, gender)
+    total = trainings_per_week(session.week_number)
+    return (
+        f"📊 Статус тренировок:\n\n"
+        f"📅 Неделя: {session.week_number}\n"
+        f"🗓 Дни тренировок: {session.training_days}\n"
+        f"✅ Выполнено: {session.completed_days}/{total}\n"
+        f"📌 Текущий день: {day_label}"
+    )
+
+
+def get_schedule_text(session: TrainingSession, gender: str | None = None) -> str:
+    total = trainings_per_week(session.week_number)
+    lines = [
+        f"📅 Расписание — Неделя {session.week_number}",
+        f"🗓 Дни: {session.training_days}\n",
+    ]
+    for day_idx in range(total):
+        status = "✅" if day_idx < session.completed_days else ("⏳" if day_idx == session.completed_days else "⭕")
+        day_name = get_training_day_label(session.week_number, day_idx, gender)
+        lines.append(f"{status} {day_name}")
+    return "\n".join(lines)
+
+
+def get_day_exercises(
+    session: TrainingSession,
+    pain_type: Optional[str] = None,
+    goal: Optional[str] = None,
+    gender: Optional[str] = None,
+):
+    """Returns (exercises_list, formatted_text) or (None, error_text)."""
+    goal_key = goal or "дефицит"
+    week = session.week_number
+    if not week_has_training_plan(goal_key, week, gender):
+        return None, TEXT_EXERCISES_WEEK_STUB.format(week=week)
+    exercises = get_exercises_for_day(goal_key, week, session.current_day, gender)
+    if not exercises:
+        return None, f"❌ Упражнения для недели {week}, день {session.current_day + 1} не заполнены."
+    if pain_type and pain_type != "healthy":
+        exercises = filter_exercises_by_pain(exercises, pain_type)
+    text = format_exercise_list(exercises)
+    return exercises, text
+
+
+def complete_training(
+    user_id: int,
+    session: TrainingSession,
+    collected_weights: list[tuple[int, str, float]] | None = None,
+    pain_feedback: str | None = None,
+    gender: str | None = None,
+) -> dict:
+    """Mark training complete. Returns dict with status info."""
+    today_str = date.today().isoformat()
+    training_type = get_training_day_label(session.week_number, session.current_day, gender)
+
+    training_log_repo.add_training_log(
+        user_id=user_id,
+        session_id=session.id,
+        training_date=today_str,
+        training_type=training_type,
+        completed=True,
+        pain_feedback=pain_feedback,
+    )
+
+    if collected_weights:
+        exercise_weight_repo.save_exercise_weights(
+            user_id=user_id,
+            session_id=session.id,
+            training_date=today_str,
+            week_number=session.week_number,
+            day_number=session.current_day + 1,
+            weights=collected_weights,
+        )
+
+    total_days = trainings_per_week(session.week_number)
+    new_completed = session.completed_days + 1
+    new_day = (session.current_day + 1) % total_days
+
+    session_repo.update_session(
+        session.id,
+        completed_days=new_completed,
+        current_day=new_day,
+    )
+
+    week_complete = new_completed >= total_days
+    needs_weighin = body_weight_repo.needs_weigh_in(user_id)
+
+    logger.info(
+        "User %d completed training day %d, total=%d/%d, week_complete=%s",
+        user_id, session.current_day, new_completed, total_days, week_complete,
+    )
+
+    return {
+        "week_complete": week_complete,
+        "needs_weighin": needs_weighin,
+        "completed_days": new_completed,
+        "week_number": session.week_number,
+    }
+
+
+def advance_to_next_week(session_id: int) -> bool:
+    """Перейти на следующую неделю. False, если неделя 8 или чек не пройден."""
+    from services.check_service import can_advance_week
+
+    session = session_repo.get_active_session_by_id(session_id)
+    if not session or not can_advance_week(session):
+        return False
+    session_repo.advance_week(session_id)
+    return True
+
+
+def go_to_previous_week(session: TrainingSession) -> bool:
+    return session_repo.go_previous_week(session.id, session.week_number)
+
+
+def save_body_weight(user_id: int, weight: float) -> None:
+    body_weight_repo.add_body_weight(user_id, weight, date.today().isoformat())
+    logger.info("Saved body weight %.1f for user %d", weight, user_id)
+
+
+В.8. Логика чеков — services/check_service.py
+------------------------------------------------------------------------
+# Файл: services/check_service.py
+
+"""Логика 5 чеков цикла: прохождение, блокировка перехода, откат недель."""
+
+import logging
+
+from content.checks import check_after_week, get_check
+from core.models import TrainingSession
+from repositories import session_repo
+
+logger = logging.getLogger(__name__)
+
+_CHECK_FIELDS = {
+    1: "check01_passed",
+    2: "check02_passed",
+    3: "check03_passed",
+    4: "check04_passed",
+    5: "check05_passed",
+}
+
+
+def is_check_passed(session: TrainingSession, check_id: int) -> bool:
+    field = _CHECK_FIELDS.get(check_id)
+    if not field:
+        return False
+    return bool(getattr(session, field, False))
+
+
+def pending_check_before_next_week(session: TrainingSession) -> int | None:
+    """Какой чек нужно пройти перед переходом с текущей недели на следующую."""
+    check_id = check_after_week(session.week_number)
+    if not check_id:
+        return None
+    if is_check_passed(session, check_id):
+        return None
+    return check_id
+
+
+def mark_check_passed(session_id: int, check_id: int) -> None:
+    field = _CHECK_FIELDS.get(check_id)
+    if field:
+        session_repo.update_session(session_id, **{field: True})
+        logger.info("Session %d passed check %d", session_id, check_id)
+
+
+def apply_check_failure(session_id: int, check_id: int) -> str:
+    """Откат недели при провале чека. Возвращает сообщение пользователю."""
+    check = get_check(check_id)
+    if not check or check.fail_target_week is None:
+        return "❌ Чек не пройден."
+
+    field = _CHECK_FIELDS[check_id]
+    session_repo.rewind_to_week(
+        session_id,
+        week_number=check.fail_target_week,
+        clear_checks_from=check_id,
+    )
+    logger.info(
+        "Session %d failed check %d — rewind to week %d",
+        session_id, check_id, check.fail_target_week,
+    )
+    return check.fail_message
+
+
+def can_advance_week(session: TrainingSession) -> bool:
+    if session.week_number >= 8:
+        return False
+    return pending_check_before_next_week(session) is None
+
+
+В.9. Описание 5 чеков — content/checks.py
+------------------------------------------------------------------------
+# Файл: content/checks.py
+
+"""Пять контрольных чеков 8-недельного цикла."""
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class CycleCheck:
+    id: int
+    title: str
+    question: str
+    fail_message: str
+    """Неделя, на которую возвращаем при провале (None — без отката)."""
+    fail_target_week: int | None
+    after_week: int
+    final: bool = False
+
+
+# Чек после завершения недели N, перед переходом на N+1 (чек 5 — после нед. 8).
+CHECK_AFTER_WEEK: dict[int, int] = {
+    2: 1,
+    4: 2,
+    6: 3,
+    7: 4,
+    8: 5,
+}
+
+CYCLE_CHECKS: dict[int, CycleCheck] = {
+    1: CycleCheck(
+        id=1,
+        title="Чек 1 — вводный этап",
+        question=(
+            "📋 Чек 1 — вводный этап (недели 1–2)\n\n"
+            "Ответьте честно:\n"
+            "• Освоились с техникой упражнений?\n"
+            "• Получается соблюдать суточную калорийность?\n\n"
+            "Если «Нет» — повторите неделю 2, пока не будет уверенности."
+        ),
+        fail_message=(
+            "❌ Чек 1 не пройден.\n\n"
+            "Возвращаемся на неделю 2: закрепите технику и калорийность, "
+            "затем снова выполните все тренировки недели."
+        ),
+        fail_target_week=2,
+        after_week=2,
+    ),
+    2: CycleCheck(
+        id=2,
+        title="Чек 2 — основной этап",
+        question=(
+            "📋 Чек 2 (после недель 3–4)\n\n"
+            "Стабильно ли выходят тренировки в зале?\n"
+            "Вы посещаете зал по плану без постоянных срывов?"
+        ),
+        fail_message=(
+            "❌ Чек 2 не пройден.\n\n"
+            "Повторите неделю 4: стабильность важнее спешки."
+        ),
+        fail_target_week=4,
+        after_week=4,
+    ),
+    3: CycleCheck(
+        id=3,
+        title="Чек 3 — прогрессия",
+        question=(
+            "📋 Чек 3 (после недель 5–6)\n\n"
+            "Стало ли получаться ставить больше силовой вес "
+            "(или больше повторений при той же технике)?"
+        ),
+        fail_message=(
+            "❌ Чек 3 не пройден.\n\n"
+            "Возврат на неделю 5: закрепите прогрессию в знакомых упражнениях."
+        ),
+        fail_target_week=5,
+        after_week=6,
+    ),
+    4: CycleCheck(
+        id=4,
+        title="Чек 4 — результат по весу",
+        question=(
+            "📋 Чек 4 (после недели 7)\n\n"
+            "Есть ли результат по весу тела за цикл "
+            "(снижение жира / рост массы — в зависимости от цели)?"
+        ),
+        fail_message=(
+            "❌ Чек 4 не пройден.\n\n"
+            "Возврат на неделю 5: пересоберите режим питания и тренировок, "
+            "затем снова пройдите путь к финалу."
+        ),
+        fail_target_week=5,
+        after_week=7,
+    ),
+    5: CycleCheck(
+        id=5,
+        title="Чек 5 — итоги цикла",
+        question=(
+            "🎉 Чек 5 — завершение 8-недельного цикла!\n\n"
+            "Давайте проведём замер и посмотрим на ваш путь.\n\n"
+            "Готовы подвести итоги?"
+        ),
+        fail_message="",
+        fail_target_week=None,
+        after_week=8,
+        final=True,
+    ),
+}
+
+
+def check_after_week(week: int) -> int | None:
+    return CHECK_AFTER_WEEK.get(week)
+
+
+def get_check(check_id: int) -> CycleCheck | None:
+    return CYCLE_CHECKS.get(check_id)
+
+
+В.10. Каталог упражнений (фрагмент) — content/exercises.py
+------------------------------------------------------------------------
+# Файл: content/exercises.py
+
+from __future__ import annotations
+from dataclasses import dataclass
+
+from content.weeks import MAX_PROGRAM_WEEKS, clamp_week
+
+
+@dataclass
+class ExerciseDefinition:
+    id: int
+    name: str
+    description: str
+    muscle_groups: list[str]
+    technique: str
+
+
+def _tech(name: str, body: str) -> str:
+    return f"🔹 Техника — {name}:\n\n{body}"
+
+
+EXERCISES: list[ExerciseDefinition] = [
+    ExerciseDefinition(
+        id=1,
+        name="Болгарские выпады",
+        description="Выпады с опорой задней ноги на возвышение — квадрицепс и ягодицы",
+        muscle_groups=["ноги"],
+        technique=_tech(
+            "Болгарские выпады",
+            "Задняя нога на скамье, передняя стопа впереди (для девушек дальше, для мужчин ближе), "
+            "спина прямая, согните переднее колено, вернитесь вверх усилием передней ноги.",
+        ),
+    ),
+    ExerciseDefinition(
+        id=2,
+        name="Отжимания",
+        description="Классические отжимания от пола — грудь, плечи, трицепс",
+        muscle_groups=["грудь", "руки"],
+        technique=_tech(
+            "Отжимания",
+            "Упор лёжа, лопатки сведены, тело прямое, опустите грудь к полу локти назад-в стороны, "
+            "руками давите будто сжимая землю внутрь, вернитесь в исходное положение.",
+        ),
+    ),
+    ExerciseDefinition(
+        id=3,
+        name="Австралийские подтягивания",
+        description="Горизонтальная тяга к перекладине или столу — спина, бицепс",
+        muscle_groups=["спина", "руки"],
+        technique=_tech(
+            "Австралийские подтягивания",
+            "Возьмитесь за перекладину на уровне пояса, тело прямое, пятки на полу, "
+            "подтянитесь к перекладине сводя лопатки (касание низом груди), "
+            "задержитесь и плавно вернитесь.",
+        ),
+    ),
+    ExerciseDefinition(
+        id=4,
+        name="Негативные подтягивания",
+        description="Медленное опускание с перекладины — сила спины и рук",
+        muscle_groups=["спина", "руки"],
+        technique=_tech(
+            "Негативные подтягивания",
+            "Из верхней точки медленно опускайтесь вниз на прямые руки, грудь смотрит вверх.",
+        ),
+    ),
+    ExerciseDefinition(
+        id=5,
+        name="Скручивания в висе",
+        description="Подъём коленей или ног к груди в висе — пресс и сгибатели бедра",
+        muscle_groups=["кор"],
+        technique=_tech(
+            "Скручивания в висе",
+            "Вис на перекладине, спина/ягодицы прижаты к стене/упору. Ноги согнуты — "
+            "скрутите таз вверх. Задача не поднять ноги, а именно скрутить таз, "
+            "без раскачки, медленно опустите обратно.",
+        ),
+    ),
+    ExerciseDefinition(
+        id=6,
+        name="Приседания",
+        description="Приседания с собственным весом — квадрицепс, ягодицы",
+
+
+В.11. Фильтр по боли — content/exercises.py
+------------------------------------------------------------------------
+# Файл: content/exercises.py
+
+PAIN_FILTER: dict[str, str] = {
+    "arm": "руки",
+    "back": "спина",
+    "legs": "ноги",
+}
+
+
+def _week_plan(goal: str, week: int, gender: str | None) -> dict[int, list[DayExercise]]:
+    goal_key = goal if goal in WEEKLY_PLANS_MAIN_STAGE else DEFAULT_GOAL
+    w = clamp_week(week)
+    if w <= 2:
+        return WEEKLY_PLANS_INTRO.get(w, {})
+    g = _normalize_gender(gender)
+    return WEEKLY_PLANS_MAIN_STAGE[goal_key][g].get(w, {})
+
+
+def week_has_training_plan(goal: str, week: int, gender: str | None = None) -> bool:
+    """Есть ли заполненная программа тренировок на неделю."""
+    return bool(_week_plan(goal, week, gender))
+
+
+def get_exercises_for_day(
+    goal: str,
+    week: int,
+    day: int,
+    gender: str | None = None,
+) -> list[DayExercise]:
+    """Упражнения на день: цель, неделя, день, пол (для недель 3+)."""
+    return list(_week_plan(goal, week, gender).get(day, []))
+
+
+def filter_exercises_by_pain(exercises: list[DayExercise], pain_type: str) -> list[DayExercise]:
+    """Исключить упражнения на зону с болью."""
+    excluded_group = PAIN_FILTER.get(pain_type)
+    if not excluded_group:
+        return exercises
+    return [e for e in exercises if excluded_group not in e.exercise.muscle_groups]
+
+
+def format_exercise_list(exercises: list[DayExercise]) -> str:
+    """Форматированный список упражнений с подходами."""
+    if not exercises:
+        return "Нет упражнений."
+    lines = []
+    for i, item in enumerate(exercises, 1):
+        ex = item.exercise
+        lines.append(f"{i}. {ex.name} — {item.prescription}\n   {ex.description}")
+    return "\n\n".join(lines)
+
+
+В.12. Анкета — handlers/form.py
+------------------------------------------------------------------------
+# Файл: handlers/form.py
+
+"""
+Questionnaire (form) handlers.
+Full form: height → weight → activity → gender → age → goal
+Short form: weight → activity (for returning users)
+"""
+
+import logging
+from maxapi import Dispatcher
+from maxapi.types import MessageCreated, Command
+from maxapi.context import MemoryContext
+
+from handlers.states import FormStates
+from handlers import session_store
+from services import user_service
+from core.validators import parse_height, parse_weight, parse_age
+from content.texts import get_nutrition_text, format_useful_bmr, TEXT_FORM_CANCELLED
+from transport.max.keyboards import (
+    build_activity_keyboard, build_gender_keyboard, build_goal_keyboard,
+    build_cancel_keyboard, build_main_keyboard, build_anketa_keyboard,
+)
+from transport.max.helpers import send_with_keyboard, send_long_message
+
+logger = logging.getLogger(__name__)
+
+
+async def start_form_flow(user_id: int, bot, context: MemoryContext) -> None:
+    """Entry point for the questionnaire. Chooses full or short form."""
+    has_forms = user_service.has_forms(user_id)
+
+    if has_forms:
+        await context.set_state(FormStates.short_weight)
+        session_store.put(user_id, "form_data", {})
+        kb = build_cancel_keyboard()
+        await send_with_keyboard(
+            bot, user_id,
+            "📝 Обновление анкеты\n\nВведите ваш текущий вес (кг):",
+            kb,
+        )
+    else:
+        await context.set_state(FormStates.height)
+        session_store.put(user_id, "form_data", {})
+        kb = build_cancel_keyboard()
+        await send_with_keyboard(
+            bot, user_id,
+            "📝 Заполнение анкеты\n\nВведите ваш рост (см):",
+            kb,
+        )
+
+
+async def handle_form_callback(event, payload: str, user_id: int, bot, context: MemoryContext) -> None:
+    """Handle form-related callbacks (activity, gender, goal selections, cancel)."""
+    parts = payload.removeprefix("form:").split(":", 1)
+    field = parts[0]
+
+    if field == "cancel":
+        session_store.remove(user_id, "form_data")
+        await context.set_state(None)
+        kb = build_anketa_keyboard()
+        await send_with_keyboard(bot, user_id, TEXT_FORM_CANCELLED, kb)
+        return
+
+    value = parts[1] if len(parts) > 1 else ""
+    state = await context.get_state()
+
+    if field == "activity":
+        if state == FormStates.activity:
+            form = session_store.get(user_id, "form_data", {})
+            form["activity_level"] = value
+            session_store.put(user_id, "form_data", form)
+            await context.set_state(FormStates.gender)
+            kb = build_gender_keyboard()
+            await send_with_keyboard(bot, user_id, "Выберите ваш пол:", kb)
+
+        elif state == FormStates.short_activity:
+            form = session_store.get(user_id, "form_data", {})
+            form["activity_level"] = value
+            session_store.put(user_id, "form_data", form)
+            await _finish_short_form(user_id, bot, context)
+
+    elif field == "gender":
+        if state == FormStates.gender:
+            form = session_store.get(user_id, "form_data", {})
+            form["gender"] = value
+            session_store.put(user_id, "form_data", form)
+            await context.set_state(FormStates.age)
+            kb = build_cancel_keyboard()
+            await send_with_keyboard(bot, user_id, "Введите ваш возраст:", kb)
+
+    elif field == "goal":
+        if state == FormStates.goal:
+            form = session_store.get(user_id, "form_data", {})
+            form["goal"] = value
+            session_store.put(user_id, "form_data", form)
+            await _finish_full_form(user_id, bot, context, event)
+
+
+async def _finish_full_form(user_id: int, bot, context: MemoryContext, event) -> None:
+    form = session_store.get(user_id, "form_data", {})
+    username = ""
+    try:
+        username = event.callback.user.username or ""
+    except AttributeError:
+        pass
+
+    bmr = user_service.create_full_profile(
+        user_id=user_id,
+        username=username,
+        height=form["height"],
+        weight=form["weight"],
+        activity_level=form["activity_level"],
+        gender=form["gender"],
+        age=form["age"],
+        goal=form["goal"],
+    )
+
+    text = (
+        "✅ Анкета заполнена!\n\n"
+        f"📏 Рост: {form['height']} см\n"
+        f"⚖️ Вес: {form['weight']} кг\n"
+        f"🏃 Активность: {form['activity_level']}\n"
+        f"👤 Пол: {form['gender']}\n"
+        f"🎂 Возраст: {form['age']}\n"
+        f"🎯 Цель: {form['goal']}\n\n"
+        f"{get_nutrition_text(form['goal'], week_number=1, calories=bmr)}"
+    )
+
+    session_store.remove(user_id, "form_data")
+    await context.set_state(None)
+    kb = build_main_keyboard()
+    await send_long_message(bot, user_id, text, attachments=[kb.as_markup()])
+
+
+async def _finish_short_form(user_id: int, bot, context: MemoryContext) -> None:
+    form = session_store.get(user_id, "form_data", {})
+
+    bmr = user_service.create_short_profile(
+        user_id=user_id,
+        username="",
+        weight=form["weight"],
+        activity_level=form["activity_level"],
+    )
+
+    if bmr is None:
+        await bot.send_message(user_id=user_id, text="❌ Не найдена первая анкета. Заполните полную анкету.")
+        await context.set_state(None)
+        kb = build_anketa_keyboard()
+        await send_with_keyboard(bot, user_id, "📝 Меню анкеты", kb)
+        return
+
+    text = (
+        "✅ Анкета обновлена!\n\n"
+        f"⚖️ Вес: {form['weight']} кг\n"
+        f"🏃 Активность: {form['activity_level']}\n"
+        f"{format_useful_bmr(bmr)}"
+    )
+
+    session_store.remove(user_id, "form_data")
+    await context.set_state(None)
+    kb = build_main_keyboard()
+    await send_with_keyboard(bot, user_id, text, kb)
+
+
+def register(dp: Dispatcher) -> None:
+    """Register text input handlers for form states."""
+
+    @dp.message_created(FormStates.height)
+    async def on_height_input(event: MessageCreated, context: MemoryContext):
+        user_id = event.message.sender.user_id
+        text = event.message.body.text or ""
+
+        if text.startswith("/"):
+            return
+
+        height = parse_height(text)
+        if height is None:
+            await event.bot.send_message(
+                user_id=user_id,
+                text="⚠️ Введите рост от 50 до 250 см (например: 175):",
+            )
+            return
+
+        form = session_store.get(user_id, "form_data", {})
+        form["height"] = height
+        session_store.put(user_id, "form_data", form)
+        await context.set_state(FormStates.weight)
+        kb = build_cancel_keyboard()
+        await send_with_keyboard(event.bot, user_id, "Введите ваш вес (кг):", kb)
+
+    @dp.message_created(FormStates.weight)
+    async def on_weight_input(event: MessageCreated, context: MemoryContext):
+        user_id = event.message.sender.user_id
+        text = event.message.body.text or ""
+
+        if text.startswith("/"):
+            return
+
+        weight = parse_weight(text)
+        if weight is None:
+            await event.bot.send_message(
+                user_id=user_id,
+                text="⚠️ Введите вес от 20 до 300 кг (например: 75.5):",
+            )
+            return
+
+        form = session_store.get(user_id, "form_data", {})
+        form["weight"] = weight
+        session_store.put(user_id, "form_data", form)
+        await context.set_state(FormStates.activity)
+        kb = build_activity_keyboard()
+        await send_with_keyboard(event.bot, user_id, "Выберите уровень активности:", kb)
+
+    @dp.message_created(FormStates.age)
+    async def on_age_input(event: MessageCreated, context: MemoryContext):
+        user_id = event.message.sender.user_id
+        text = event.message.body.text or ""
+
+        if text.startswith("/"):
+            return
+
+        age = parse_age(text)
+        if age is None:
+            await event.bot.send_message(
+                user_id=user_id,
+                text="⚠️ Введите возраст от 1 до 120 (например: 25):",
+            )
+            return
+
+        form = session_store.get(user_id, "form_data", {})
+        form["age"] = age
+        session_store.put(user_id, "form_data", form)
+        await context.set_state(FormStates.goal)
+        kb = build_goal_keyboard()
+        await send_with_keyboard(event.bot, user_id, "Выберите вашу цель:", kb)
+
+    @dp.message_created(FormStates.short_weight)
+    async def on_short_weight_input(event: MessageCreated, context: MemoryContext):
+        user_id = event.message.sender.user_id
+        text = event.message.body.text or ""
+
+        if text.startswith("/"):
+            return
+
+        weight = parse_weight(text)
+        if weight is None:
+            await event.bot.send_message(
+                user_id=user_id,
+                text="⚠️ Введите вес от 20 до 300 кг (например: 75.5):",
+            )
+            return
+
+        form = session_store.get(user_id, "form_data", {})
+        form["weight"] = weight
+        session_store.put(user_id, "form_data", form)
+        await context.set_state(FormStates.short_activity)
+        kb = build_activity_keyboard()
+        await send_with_keyboard(event.bot, user_id, "Выберите уровень активности:", kb)
+
+    @dp.message_created(Command("form"))
+    async def on_form_command(event: MessageCreated, context: MemoryContext):
+        user_id = event.message.sender.user_id
+        await start_form_flow(user_id, event.bot, context)
+
+    @dp.message_created(Command("cancel"))
+    async def on_cancel_command(event: MessageCreated, context: MemoryContext):
+        user_id = event.message.sender.user_id
+        session_store.remove(user_id, "form_data")
+        await context.set_state(None)
+        kb = build_main_keyboard()
+        await send_with_keyboard(event.bot, user_id, TEXT_FORM_CANCELLED, kb)
+
+
+В.13. Чеки и завершение недели — handlers/training_check.py
+------------------------------------------------------------------------
+# Файл: handlers/training_check.py
+
+"""
+Контрольные чеки цикла (1–5) и ответы на вечерние напоминания.
+"""
+
+import logging
+
+from maxapi.context import MemoryContext
+
+from handlers.states import TrainingStates
+from handlers import session_store
+from services import training_service, schedule_service, check_service, user_service
+from content.checks import get_check
+from content.texts import TEXT_WEEK_COMPLETE, get_week_transition_text
+from transport.max.keyboards import (
+    build_check_keyboard,
+    build_training_keyboard,
+    build_next_week_keyboard,
+    build_main_keyboard,
+    build_weighin_skip_keyboard,
+)
+from transport.max.helpers import send_with_keyboard, send_long_message
+
+logger = logging.getLogger(__name__)
+
+TEXT_CYCLE_COMPLETE = (
+    "🏆 Поздравляем! 8-недельный цикл завершён.\n\n"
+    "Давайте зафиксируем замер и посмотрим на ваш путь."
+)
+
+TEXT_CHECK_PASSED = "✅ Чек пройден!"
+
+
+async def prompt_pending_check(user_id: int, bot, context: MemoryContext) -> bool:
+    """Показать чек, блокирующий переход на след. неделю. True если чек показан."""
+    session = training_service.get_active_session(user_id)
+    if not session:
+        return False
+    check_id = check_service.pending_check_before_next_week(session)
+    if not check_id:
+        return False
+    await _start_check(user_id, bot, context, session.id, check_id)
+    return True
+
+
+async def try_advance_week_or_check(user_id: int, bot, context: MemoryContext) -> None:
+    """След. неделя: сначала чек (если нужен), затем переход."""
+    session = training_service.get_active_session(user_id)
+    if not session:
+        await bot.send_message(user_id=user_id, text="❌ Нет активной тренировочной сессии.")
+        return
+
+    if session.week_number >= 8:
+        await bot.send_message(
+            user_id=user_id,
+            text="✅ Вы на финальной неделе цикла. Пройдите чек 5 после всех тренировок.",
+        )
+        return
+
+    if await prompt_pending_check(user_id, bot, context):
+        return
+
+    if not training_service.advance_to_next_week(session.id):
+        await bot.send_message(user_id=user_id, text="⚠️ Не удалось перейти на следующую неделю.")
+        return
+
+    await _send_week_transition(user_id, bot)
+
+
+async def _send_week_transition(user_id: int, bot) -> None:
+    session = training_service.get_active_session(user_id)
+    if not session:
+        return
+    profile = user_service.get_latest_profile(user_id)
+    gender = profile.gender if profile else "Мужской"
+    goal = profile.goal if profile else "дефицит"
+    parts = [f"➡️ Переход на неделю {session.week_number}"]
+    transition = get_week_transition_text(goal, session.week_number, gender)
+    if transition:
+        parts.append(transition)
+    parts.append(training_service.get_training_status(session, gender))
+    kb = build_training_keyboard()
+    await send_long_message(bot, user_id, "\n\n".join(parts), attachments=[kb.as_markup()])
+
+
+async def handle_week_completion(user_id: int, bot, context: MemoryContext) -> None:
+    """После 3/3 (или 2/2 на нед. 8) тренировок."""
+    session = training_service.get_active_session(user_id)
+    if not session:
+        return
+
+    check_id = check_service.pending_check_before_next_week(session)
+    if check_id:
+        await _start_check(user_id, bot, context, session.id, check_id)
+        return
+
+    if session.week_number >= 8:
+        kb = build_main_keyboard()
+        await send_with_keyboard(bot, user_id, TEXT_CYCLE_COMPLETE, kb)
+        return
+
+    kb = build_next_week_keyboard()
+    await send_with_keyboard(bot, user_id, TEXT_WEEK_COMPLETE, kb)
+
+
+async def _start_check(
+    user_id: int, bot, context: MemoryContext, session_id: int, check_id: int,
+) -> None:
+    check = get_check(check_id)
+    if not check:
+        return
+    session_store.put(user_id, "check_step", str(check_id))
+    session_store.put(user_id, "check_session_id", session_id)
+    kb = build_check_keyboard(check_id, final=check.final)
+    await send_with_keyboard(bot, user_id, check.question, kb)
+
+
+async def handle_check_callback(event, payload: str, user_id: int, bot, context: MemoryContext) -> None:
+    """check:N:yes | check:N:no"""
+    parts = payload.removeprefix("check:").split(":")
+    if len(parts) != 2:
+        return
+
+    try:
+        check_id = int(parts[0])
+    except ValueError:
+        return
+
+    answer = parts[1]
+    session_id = session_store.get(user_id, "check_session_id")
+
+    if answer == "no":
+        if session_id:
+            msg = check_service.apply_check_failure(session_id, check_id)
+        else:
+            msg = "❌ Чек не пройден."
+        session_store.remove(user_id, "check_step")
+        session_store.remove(user_id, "check_session_id")
+        kb = build_training_keyboard()
+        await send_with_keyboard(bot, user_id, msg, kb)
+        return
+
+    if answer != "yes":
+        return
+
+    if session_id:
+        check_service.mark_check_passed(session_id, check_id)
+        logger.info("User %d passed check %d", user_id, check_id)
+
+    session_store.remove(user_id, "check_step")
+    session_store.remove(user_id, "check_session_id")
+
+    check = get_check(check_id)
+    if check and check.final:
+        await context.set_state(TrainingStates.collecting_body_weight)
+        session_store.put(user_id, "awaiting_weighin", True)
+        kb = build_weighin_skip_keyboard()
+        await send_with_keyboard(
+            bot, user_id,
+            f"{TEXT_CHECK_PASSED}\n\n{TEXT_CYCLE_COMPLETE}\n\n"
+            "⚖️ Введите текущий вес (кг) для итогового замера:",
+            kb,
+        )
+        return
+
+    kb = build_next_week_keyboard()
+    await send_with_keyboard(
+        bot, user_id,
+        f"{TEXT_CHECK_PASSED}\n\n{TEXT_WEEK_COMPLETE}",
+        kb,
+    )
+
+
+async def handle_scheduled_callback(event, payload: str, user_id: int, bot, context: MemoryContext) -> None:
+    """Handle sched:yes:N or sched:no:N callbacks from scheduled evening checks."""
+    parts = payload.removeprefix("sched:").split(":")
+    if len(parts) < 2:
+        return
+
+    response = parts[0]
+    try:
+        log_id = int(parts[1])
+    except ValueError:
+        return
+
+    completed = response == "yes"
+
+    session = training_service.get_active_session(user_id)
+    session_id = session.id if session else 0
+
+    result = schedule_service.handle_scheduled_check_response(
+        log_id=log_id,
+        session_id=session_id,
+        user_id=user_id,
+        completed=completed,
+    )
+
+    if completed:
+        text = "✅ Отлично! Тренировка засчитана."
+        if result.get("week_complete"):
+            await handle_week_completion(user_id, bot, context)
+            return
+        elif result.get("needs_weighin"):
+            await context.set_state(TrainingStates.collecting_body_weight)
+            session_store.put(user_id, "awaiting_weighin", True)
+            kb = build_weighin_skip_keyboard()
+            await send_with_keyboard(
+                bot, user_id,
+                f"{text}\n\n⚖️ Пора взвеситься! Введите ваш текущий вес (кг):",
+                kb,
+            )
+            return
+    else:
+        text = "📌 Тренировка отложена. Постарайтесь наверстать!"
+
+    await bot.send_message(user_id=user_id, text=text)
+
+
+def register(dp):
+    """Регистрация не требуется — чеки через callback, без ввода текста."""
+    pass
+
+
+В.14. Навигация (маршрутизация callback) — handlers/navigation.py
+------------------------------------------------------------------------
+# Файл: handlers/navigation.py
+
+"""
+Central callback handler for all navigation and action callbacks.
+Routes message_callback events based on payload prefix.
+"""
+
+import logging
+from maxapi import Dispatcher
+from maxapi.types import MessageCallback
+from maxapi.context import MemoryContext
+
+from handlers import session_store
+from handlers.form import start_form_flow, handle_form_callback
+from handlers.training import (
+    handle_training_nav,
+    handle_days_selection,
+    handle_health_selection,
+    handle_technique_selection,
+)
+from handlers.training_check import handle_check_callback, handle_scheduled_callback
+from handlers.show import handle_show_callback
+from handlers.achievements import show_achievements_menu, handle_achievements_callback
+
+from services import user_service, training_service
+from content.texts import (
+    TEXT_NO_ACTIVE_SESSION,
+    TEXT_NO_FORMS,
+    get_nutrition_text,
+    get_recovery_text,
+    get_training_rules_text,
+)
+from transport.max.keyboards import (
+    build_menu_keyboard,
+    build_main_keyboard,
+    build_anketa_keyboard,
+    build_training_hub_keyboard,
+    build_training_rules_keyboard,
+    build_training_keyboard,
+    build_training_days_keyboard,
+)
+from transport.max.helpers import send_with_keyboard, send_long_message
+
+logger = logging.getLogger(__name__)
+
+
+def register(dp: Dispatcher) -> None:
+
+    @dp.message_callback()
+    async def on_callback(event: MessageCallback, context: MemoryContext):
+        payload = event.callback.payload or ""
+        user_id = event.callback.user.user_id
+        bot = event.bot
+
+        logger.debug("Callback from user %d: %s", user_id, payload)
+
+        try:
+            if payload.startswith("nav:"):
+                await _handle_nav(event, payload, user_id, bot, context)
+            elif payload.startswith("action:"):
+                await _handle_action(event, payload, user_id, bot, context)
+            elif payload.startswith("form:"):
+                await handle_form_callback(event, payload, user_id, bot, context)
+            elif payload.startswith("days:"):
+                await handle_days_selection(event, payload, user_id, bot)
+            elif payload.startswith("training:"):
+                await handle_training_nav(event, payload, user_id, bot, context)
+            elif payload.startswith("health:"):
+                await handle_health_selection(event, payload, user_id, bot, context)
+            elif payload.startswith("technique:"):
+                await handle_technique_selection(event, payload, user_id, bot)
+            elif payload.startswith("check:"):
+                await handle_check_callback(event, payload, user_id, bot, context)
+            elif payload.startswith("sched:"):
+                await handle_scheduled_callback(event, payload, user_id, bot, context)
+            elif payload.startswith("achieve:"):
+                await handle_achievements_callback(payload, user_id, bot)
+            else:
+                logger.warning("Unknown callback payload: %s", payload)
+        except Exception:
+            logger.exception("Error handling callback %s for user %d", payload, user_id)
+            await bot.send_message(user_id=user_id, text="⚠️ Произошла ошибка. Попробуйте ещё раз.")
+
+
+async def _handle_nav(event, payload: str, user_id: int, bot, context: MemoryContext):
+    dest = payload.removeprefix("nav:")
+
+    if dest == "menu":
+        await context.set_state(None)
+        kb = build_menu_keyboard()
+        await send_with_keyboard(bot, user_id, "🏠 Главное меню", kb)
+
+    elif dest == "main":
+        await context.set_state(None)
+        kb = build_main_keyboard()
+        await send_with_keyboard(bot, user_id, "📋 Основное меню", kb)
+
+    elif dest == "anketa":
+        await context.set_state(None)
+        kb = build_anketa_keyboard()
+        await send_with_keyboard(bot, user_id, "📝 Меню анкеты", kb)
+
+    elif dest == "diet":
+        profile = user_service.get_latest_profile(user_id)
+        if profile:
+            week = training_service.resolve_user_week(user_id)
+            calories = user_service.get_target_calories(profile, week)
+            text = (
+                f"🎯 Ваша цель: {profile.goal}\n"
+                f"📅 Неделя: {week}\n\n"
+                f"{get_nutrition_text(profile.goal, week, calories)}"
+            )
+        else:
+            text = f"❌ {TEXT_NO_FORMS}"
+        kb = build_main_keyboard()
+        await send_long_message(bot, user_id, text, attachments=[kb.as_markup()])
+
+    elif dest == "recovery":
+        profile = user_service.get_latest_profile(user_id)
+        if profile:
+            week = training_service.resolve_user_week(user_id)
+            text = get_recovery_text(profile.goal, week)
+
+
+В.15. Самочувствие и завершение тренировки — handlers/training.py
+------------------------------------------------------------------------
+# Файл: handlers/training.py
+
+    elif action == "skip_weighin":
+        session_store.remove(user_id, "awaiting_weighin")
+        await context.set_state(None)
+        kb = build_training_keyboard()
+        await send_with_keyboard(bot, user_id, "⏭ Взвешивание пропущено.", kb)
+
+
+async def handle_health_selection(event, payload: str, user_id: int, bot, context: MemoryContext) -> None:
+    """Handle health status selection (health:healthy, health:arm, etc.)."""
+    pain_type = payload.removeprefix("health:")
+    session_store.put(user_id, "pain_type", pain_type)
+
+    session = training_service.get_active_session(user_id)
+    if not session:
+        await bot.send_message(user_id=user_id, text=TEXT_NO_ACTIVE_SESSION)
+        return
+
+    gender = _user_gender(user_id)
+    exercises, text = training_service.get_day_exercises(
+        session, pain_type, _user_goal(user_id), gender,
+    )
+    if not exercises:
+        kb = build_training_keyboard()
+        await send_with_keyboard(bot, user_id, text, kb)
+        return
+
+    day_label = get_training_day_label(session.week_number, session.current_day, gender)
+    header = f"📋 Упражнения дня — {day_label}:\n\n"
+    await bot.send_message(user_id=user_id, text=header + text)
+
+    session_store.put(
+        user_id,
+        "weight_queue",
+        [(item.exercise.id, item.exercise.name) for item in exercises],
+    )
+    session_store.put(user_id, "weight_index", 0)
+    session_store.put(user_id, "collected_weights", [])
+
+    first_ex = exercises[0].exercise
+    await context.set_state(TrainingStates.collecting_exercise_weight)
+    await bot.send_message(
+        user_id=user_id,
+        text=f"🏋️ Упражнение 1/{len(exercises)}: {first_ex.name}\nВведите вес (кг):",
+    )
+
+
+async def handle_technique_selection(event, payload: str, user_id: int, bot) -> None:
+    """Handle technique:N callback."""
+    try:
+        exercise_id = int(payload.removeprefix("technique:"))
+    except ValueError:
+        return
+
+    text = exercise_service.get_technique_text(exercise_id)
+    exercises_ids = session_store.get(user_id, "technique_exercises", [])
+    exercises = [EXERCISE_BY_ID[eid] for eid in exercises_ids if eid in EXERCISE_BY_ID]
+
+    kb = build_technique_keyboard(exercises) if exercises else build_training_keyboard()
+    await send_long_message(bot, user_id, text, attachments=[kb.as_markup()])
+
+
+async def _complete_training(user_id: int, bot, session, context: MemoryContext) -> None:
+    collected = session_store.get(user_id, "collected_weights", [])
+    pain = session_store.get(user_id, "pain_type")
+
+    weights_tuples = [(eid, ename, w) for eid, ename, w in collected] if collected else None
+
+    result = training_service.complete_training(
+        user_id=user_id,
+        session=session,
+        collected_weights=weights_tuples,
+        pain_feedback=pain,
+        gender=_user_gender(user_id),
+    )
+
+    session_store.remove(user_id, "weight_queue")
+    session_store.remove(user_id, "weight_index")
+    session_store.remove(user_id, "collected_weights")
+    session_store.remove(user_id, "pain_type")
+
+    if result["week_complete"]:
+        from handlers.training_check import handle_week_completion
+        await handle_week_completion(user_id, bot, context)
+    elif result["needs_weighin"]:
+        await context.set_state(TrainingStates.collecting_body_weight)
+        session_store.put(user_id, "awaiting_weighin", True)
+        kb = build_weighin_skip_keyboard()
+        await send_with_keyboard(
+            bot, user_id,
+            f"{TEXT_TRAINING_COMPLETE}\n\n⚖️ Пора взвеситься! Введите ваш текущий вес (кг):",
+            kb,
+        )
+    else:
+        await context.set_state(None)
+        kb = build_training_keyboard()
+        await send_with_keyboard(bot, user_id, TEXT_TRAINING_COMPLETE, kb)
+
+
+def register(dp: Dispatcher) -> None:
+    """Register text input handlers for training states."""
+
+

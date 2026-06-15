@@ -9,7 +9,8 @@ from maxapi.types import MessageCreated, BotStarted, Command, CommandStart
 
 from transport.max.keyboards import build_menu_keyboard
 from transport.max.helpers import send_with_keyboard
-from content.texts import TEXT_WELCOME, TEXT_ACHIEVEMENTS_STUB
+from content.texts import TEXT_WELCOME
+from handlers.achievements import show_achievements_menu
 
 logger = logging.getLogger(__name__)
 
@@ -32,5 +33,4 @@ def register(dp: Dispatcher) -> None:
     @dp.message_created(Command("achievements"))
     async def on_achievements(event: MessageCreated):
         user_id = event.message.sender.user_id
-        kb = build_menu_keyboard()
-        await send_with_keyboard(event.bot, user_id, TEXT_ACHIEVEMENTS_STUB, kb)
+        await show_achievements_menu(user_id, event.bot)

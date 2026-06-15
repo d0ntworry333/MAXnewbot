@@ -1,0 +1,107 @@
+@startuml activity_training_maxbot
+' Activity Diagram — нотация UML 2.x
+skinparam shadowing false
+skinparam activity {
+  BackgroundColor #E8F4FC
+  BorderColor #2E86AB
+}
+skinparam ArrowThickness 1
+
+title Диаграмма деятельности\n«Упражнения дня» + завершение тренировки
+
+legend right
+  |= Элемент |= Обозначение |
+  | Начальный узел | ● |
+  | Конечный узел | ◎ (bullseye) |
+  | Действие | прямоугольник со скруглением |
+  | Решение | ◇ ромб |
+  | Поток управления | ———▷ сплошная |
+  | Поток объектов | - - - → пунктир (к объекту данных) |
+  | Разделение/слияние | ═══ жирная полоса (fork/join) |
+endlegend
+
+|#LightBlue|Пользователь|
+|#LightYellow|Система|
+
+start
+
+partition "Поток управления" {
+  |Пользователь|
+  :Открыть «Тренировки»\n(nav:training);
+  :«Упражнения дня»\n(training:day_exercises);
+
+  |Система|
+  if (Активная сессия?) then (нет)
+    :Предложить создать сессию\n(days:*);
+    stop
+  else (да)
+  endif
+
+  :Показать клавиатуру\nсамочувствия;
+
+  |Пользователь|
+  :Выбрать health:\nhealthy|arm|back|legs;
+
+  |Система|
+  :Сохранить pain_type\n(session_store);
+
+  :get_exercises_for_day();
+
+  if (pain ≠ healthy?) then (да)
+    :filter_exercises_by_pain();
+  else (нет)
+  endif
+
+  if (Список пуст?) then (да)
+    :Сообщение об ошибке;
+    stop
+  endif
+
+  :Показать список упражнений;
+
+  |Пользователь|
+  repeat
+    :Ввести рабочий вес;
+  repeat while (Ещё в очереди?) is (да)
+  -> нет;
+
+  |Система|
+  :save_exercise_weights()\n- - - → exercise_weights;
+}
+
+partition "Завершение" {
+  |Пользователь|
+  :«Я выполнил тренировку»\n(action:complete_training);
+
+  |Система|
+  :add_training_log\n(completed=true)\n- - - → training_log;
+
+  :Обновить training_sessions\n(completed_days++, current_day);
+
+  if (completed_days ≥ 3?) then (да)
+    :Инициировать check01/check02;
+  else (нет)
+  endif
+
+  if (needs_weigh_in?) then (да)
+    |Пользователь|
+    :Ввести массу тела;
+    |Система|
+    :Запись weight_progress\n- - - → weight_progress;
+  endif
+
+  :Показать статус;
+}
+
+end
+
+note right
+  **Параллельно (fork в другом потоке):**
+  ═══ APScheduler ═══
+  • 23:00 — вечерний опрос (sched:*)
+  • 16:00 — напоминание
+  • 23:59 — деактивация сессий
+  Поток объектов: - - - → к SQLite
+end note
+
+@enduml

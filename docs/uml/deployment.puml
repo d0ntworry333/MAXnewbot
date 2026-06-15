@@ -1,0 +1,132 @@
+@startuml deployment_maxbot
+' Component + Deployment — нотация UML 2.x
+skinparam shadowing false
+skinparam componentStyle rectangle
+skinparam ArrowThickness 1
+
+title Диаграмма компонентов и развёртывания\nМАКС-бот «Твой тренер»
+
+legend bottom
+  |= Связь |= Обозначение |
+  | Ассоциация | ——— сплошная |
+  | Зависимость <<use>> | - - - → пунктир, открытая стрелка |
+  | Реализация (implements) | - - - ▷ пунктир + пустой треугольник |
+  | Обобщение (extends) | ———▷ сплошная + пустой треугольник |
+  | Композиция | ———◆ сплошная + закрашенный ромб |
+  | Агрегация | ———◇ сплошная + пустой ромб |
+  | Двунаправленная связь | ——— (без стрелки) |
+endlegend
+
+' ═══════════════ DEPLOYMENT VIEW ═══════════════
+node "Клиент" as ClientNode {
+  artifact "Приложение МАКС" as MAXClient
+}
+
+cloud "Облако МАКС" as Cloud {
+  node "platform-api.max.ru" as MAXNode {
+    interface "IChatAPI" as IChatAPI
+    component [MAX API] as MAXAPI
+    MAXAPI ..|> IChatAPI
+  }
+}
+
+node "Хост разработчика\n(локально / Docker)" as HostNode {
+  artifact "app/main.py" as MainPy
+
+  node "Контейнер Python" as PyNode {
+
+    package "handlers <<layer>>" {
+      component [navigation] as HNav
+      component [form] as HForm
+      component [training] as HTrain
+      component [training_check] as HCheck
+    }
+
+    package "services" {
+      component [user_service] as SUser
+      component [training_service] as STrain
+      component [schedule_service] as SSched
+    }
+
+    package "repositories" {
+      component [user_repo] as RUser
+      component [session_repo] as RSession
+      component [training_log_repo] as RLog
+      component [database.py] as RDB
+    }
+
+    package "core" <<domain>> {
+      component [calculations] as Calc
+      component [validators] as Valid
+    }
+
+    package "content" {
+      component [exercises] as ExCat
+      component [texts] as Texts
+    }
+
+    package "transport" {
+      component [keyboards] as KB
+      component [maxapi adapter] as MaxAdapter
+    }
+
+    component [APScheduler jobs] as Jobs
+    component [.env config] as Config
+  }
+
+  database "users.db" as SQLite
+  folder ".env" as EnvFile
+}
+
+' ═══════════════ DEPLOYMENT LINKS ═══════════════
+MAXClient -down- IChatAPI : <<HTTPS>>\nсообщения / callback
+MaxAdapter ..|> IChatAPI : <<use>>\nреализация протокола
+MainPy *-- PyNode : <<composition>>\nточка входа
+
+' ═══════════════ COMPONENT DEPENDENCIES (пунктир) ═══════════════
+HNav ..> SUser : <<use>>
+HNav ..> STrain : <<use>>
+HForm ..> SUser : <<use>>
+HTrain ..> STrain : <<use>>
+HCheck ..> SSched : <<use>>
+
+SUser ..> RUser : <<use>>
+SUser ..> Calc : <<use>>
+SUser ..> Valid : <<use>>
+STrain ..> RSession : <<use>>
+STrain ..> RLog : <<use>>
+STrain ..> ExCat : <<use>>
+SSched ..> RLog : <<use>>
+
+RUser ..> RDB : <<use>>
+RSession ..> RDB : <<use>>
+RLog ..> RDB : <<use>>
+RDB *-- SQLite : <<composition>>\nфайл БД
+
+HNav ..> KB : <<use>>
+HNav ..> MaxAdapter : <<use>>
+HTrain ..> KB : <<use>>
+Jobs ..> SSched : <<use>>
+Jobs ..> MaxAdapter : <<use>>\nисходящие сообщения
+
+Config ..> EnvFile : <<use>>
+MaxAdapter ..> MAXAPI : <<use>>\nHTTP long polling
+
+' ═══════════════ GENERALIZATION (наследование слоёв) ═══════════════
+component "ApplicationLayer" as AppLayer
+component "DomainLayer" as DomLayer
+component "InfrastructureLayer" as InfraLayer
+
+HNav -up-|> AppLayer
+SUser -up-|> DomLayer
+RDB -up-|> InfraLayer
+
+note right of HostNode
+  **Развёртывание сейчас:**
+  python app/main.py
+
+  **Опционально:**
+  docker compose up
+end note
+
+@enduml

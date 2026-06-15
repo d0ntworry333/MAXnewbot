@@ -194,3 +194,50 @@ def build_weighin_skip_keyboard() -> InlineKeyboardBuilder:
     b = InlineKeyboardBuilder()
     b.row(CallbackButton(text="⏭ Пропустить", payload="training:skip_weighin"))
     return b
+
+
+def build_achievements_menu_keyboard() -> InlineKeyboardBuilder:
+    b = InlineKeyboardBuilder()
+    b.row(CallbackButton(
+        text="⚖️ Вес тела за цикл",
+        payload="achieve:body",
+    ))
+    b.row(CallbackButton(
+        text="🏋️ Силовой вес за цикл",
+        payload="achieve:strength",
+    ))
+    b.row(CallbackButton(text="↩️ Главное меню", payload="nav:menu"))
+    return b
+
+
+def build_achievements_body_keyboard() -> InlineKeyboardBuilder:
+    b = InlineKeyboardBuilder()
+    b.row(CallbackButton(text="📌 До и после", payload="achieve:body:before_after"))
+    b.row(CallbackButton(text="📈 Изменения", payload="achieve:body:changes"))
+    b.row(CallbackButton(text="↩️ Назад", payload="achieve:menu"))
+    return b
+
+
+def build_achievements_strength_keyboard() -> InlineKeyboardBuilder:
+    b = InlineKeyboardBuilder()
+    b.row(CallbackButton(text="📊 Средний", payload="achieve:strength:avg"))
+    b.row(CallbackButton(text="📋 По упражнениям", payload="achieve:strength:exercises"))
+    b.row(CallbackButton(text="↩️ Назад", payload="achieve:menu"))
+    return b
+
+
+def build_achievements_exercises_keyboard(
+    exercises: list[tuple[int, str]],
+) -> InlineKeyboardBuilder:
+    b = InlineKeyboardBuilder()
+    for i, (ex_id, name) in enumerate(exercises, start=1):
+        label = name if len(name) <= 40 else f"{name[:37]}..."
+        b.row(CallbackButton(text=f"{i}. {label}", payload=f"achieve:ex:{ex_id}"))
+    b.row(CallbackButton(text="↩️ Назад", payload="achieve:strength"))
+    return b
+
+
+def build_achievements_back_keyboard(back_payload: str) -> InlineKeyboardBuilder:
+    b = InlineKeyboardBuilder()
+    b.row(CallbackButton(text="↩️ Назад", payload=back_payload))
+    return b

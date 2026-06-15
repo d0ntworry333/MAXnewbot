@@ -1,4 +1,4 @@
-# Architecture: MAX Fitness Bot
+# Architecture: МАКС-бот «Твой тренер»
 
 > **Date:** 2026-04-01
 > **Platform:** MAX Messenger
